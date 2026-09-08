@@ -298,6 +298,14 @@ async function downloadOutputs(outputAssets) {
 async function main() {
   if (typeof fetch === "undefined") die("Node >= 18 required (global fetch missing)");
 
+  // Auth is independent of the job inputs — check it before touching the CSV/assets
+  // (which are supplied out-of-band and may not be present locally).
+  if (MODE === "check-auth") {
+    const tok = await getAccessToken();
+    log(`✓ IMS token acquired (${tok.token_type}, expires_in=${tok.expires_in}s, len=${(tok.access_token||"").length})`);
+    return;
+  }
+
   const lib = parseLib();
   const rows = parseCSV(fs.readFileSync(abs(CFG.files.csv), "utf8"));
   const inputs = collectInputs(rows, lib);
@@ -309,12 +317,6 @@ async function main() {
   log(`csv rows     : ${rows.length}  (stems: ${rows.map((r) => r.outputFileName).join(", ")})`);
   log(`inputs       : ${inputs.length} files`);
   log(`outputs      : ${outputs.length} files  (rows × sizes)`);
-
-  if (MODE === "check-auth") {
-    const tok = await getAccessToken();
-    log(`✓ IMS token acquired (${tok.token_type}, expires_in=${tok.expires_in}s, len=${(tok.access_token||"").length})`);
-    return;
-  }
 
   if (MODE === "dry-run") {
     const dbg = path.join(__dirname, "_dryrun");

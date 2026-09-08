@@ -1,4 +1,6 @@
 cloud/.env
+cloud/.env.*
+!cloud/.env.example
 cloud/_dryrun/
 output/
 output_cloud/
