@@ -53,6 +53,9 @@ const CFG = {
     // access token per run via grant_type=authorization_code. This is the
     // production path for an IMSS service-token client.
     authCode: process.env.FFS_AUTH_CODE || "",
+    // IMS Organization ID (…@AdobeOrg). Firefly Services requires this as the
+    // x-gw-ims-org-id header; the API can't resolve org from a service token alone.
+    orgId: process.env.FFS_ORG_ID || process.env.IMS_ORG_ID || "",
   },
   api: {
     base: process.env.INDESIGN_API_BASE || "https://indesign.adobe.io", // VERIFY
@@ -76,7 +79,10 @@ const CFG = {
 };
 
 const args = new Set(process.argv.slice(2));
-const MODE = args.has("--submit") ? "submit" : args.has("--check-auth") ? "check-auth" : "dry-run";
+const MODE = args.has("--submit") ? "submit"
+  : args.has("--ping") ? "ping"
+  : args.has("--check-auth") ? "check-auth"
+  : "dry-run";
 
 // ----------------------------------------------------------------------------
 // helpers
@@ -303,6 +309,35 @@ async function main() {
   if (MODE === "check-auth") {
     const tok = await getAccessToken();
     log(`✓ IMS token acquired (${tok.token_type}, expires_in=${tok.expires_in}s, len=${(tok.access_token||"").length})`);
+    return;
+  }
+
+  // Minimal reachability test: is the token + host + entitlement accepted by the
+  // InDesign API? GET /v3/scripts (list custom scripts) is a lightweight probe.
+  if (MODE === "ping") {
+    const tok = await getAccessToken();
+    const url = CFG.api.base + (process.env.INDESIGN_PING_PATH || "/v3/scripts");
+    let res, bodyText = "";
+    try {
+      res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${tok.access_token}`,
+          "x-api-key": CFG.ims.clientId,
+          ...(CFG.ims.orgId ? { "x-gw-ims-org-id": CFG.ims.orgId } : {}),
+        },
+      });
+      bodyText = await res.text();
+    } catch (e) {
+      die(`ping request failed (network/host): ${e?.message || e}`);
+    }
+    log(`ping ${url}`);
+    log(`  x-api-key: ${CFG.ims.clientId ? CFG.ims.clientId.slice(0, 6) + "…" : "(none — set FFS_CLIENT_ID)"}`);
+    log(`  status   : ${res.status} ${res.statusText}`);
+    log(`  body     : ${bodyText.slice(0, 400)}`);
+    if (res.ok) log("  → OK: token + host + entitlement accepted. 🎉");
+    else if (res.status === 401) log("  → 401: token not accepted (stage token vs prod host? wrong x-api-key?).");
+    else if (res.status === 403) log("  → 403: authenticated but not entitled for this API on this env.");
+    else if (res.status === 404) log("  → 404: host reachable but path off; try INDESIGN_PING_PATH.");
     return;
   }
 
