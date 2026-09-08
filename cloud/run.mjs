@@ -44,8 +44,11 @@ const CFG = {
     endpoint: process.env.IMS_ENDPOINT || "https://ims-na1.adobelogin.com/ims/token/v3",
     clientId: process.env.FFS_CLIENT_ID || "",
     clientSecret: process.env.FFS_CLIENT_SECRET || "",
-    // Scopes come from your Developer Console project — VERIFY the exact set.
-    scopes: process.env.FFS_SCOPES || "openid,AdobeID,read_organizations,firefly_api,ff_apis",
+    // Verified against the InDesign APIs / Firefly Services Dev Console onboarding.
+    scopes: process.env.FFS_SCOPES || "openid,AdobeID,creative_sdk,ff_apis,indesign_services",
+    // Pre-generated bearer token (e.g. IMSS "short-lived service token"). When set,
+    // it is used directly and the client_credentials grant is skipped.
+    accessToken: process.env.FFS_ACCESS_TOKEN || "",
   },
   api: {
     base: process.env.INDESIGN_API_BASE || "https://indesign.adobe.io", // VERIFY
@@ -164,7 +167,11 @@ function computeOutputs(rows, sizes) {
 // IMS auth (stable, fully implemented)
 // ----------------------------------------------------------------------------
 async function getAccessToken() {
-  if (!CFG.ims.clientId || !CFG.ims.clientSecret) die("FFS_CLIENT_ID / FFS_CLIENT_SECRET not set (see cloud/.env.example)");
+  // Pre-supplied token wins (IMSS service-token clients don't do client_credentials).
+  if (CFG.ims.accessToken) {
+    return { access_token: CFG.ims.accessToken, token_type: "bearer", expires_in: "preset (FFS_ACCESS_TOKEN)" };
+  }
+  if (!CFG.ims.clientId || !CFG.ims.clientSecret) die("Set FFS_ACCESS_TOKEN (IMSS short-lived service token) or FFS_CLIENT_ID/FFS_CLIENT_SECRET (OAuth S2S). See cloud/.env.example");
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: CFG.ims.clientId,
