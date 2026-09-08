@@ -1,0 +1,14 @@
+cloud/.env
+cloud/_dryrun/
+output/
+output_cloud/
+*.indd.lock
+.DS_Store
+
+# --- Public repo: exclude internal United/Adobe brand assets, marketing copy,
+#     and the handoff doc. Supply these out-of-band for real cloud runs. ---
+assets/
+input/
+template/
+HANDOFF.md
+scripts/_extracted_specs.json
