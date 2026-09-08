@@ -16,7 +16,7 @@
  */
 
 #target indesign
-#include "united_lib.jsx"
+#include "brand_lib.jsx"
 
 (function () {
     var log = [], warn = [], written = 0, inddWritten = 0;
@@ -28,22 +28,22 @@
     var doc = null;
     try {
         var tpl = U.file(U.CONFIG.templateRel);
-        try { if ($.global.UNITED_TEMPLATE) { var otpl = new File(String($.global.UNITED_TEMPLATE)); if (otpl.exists) tpl = otpl; } } catch (e) {}
+        try { if ($.global.BRAND_TEMPLATE) { var otpl = new File(String($.global.BRAND_TEMPLATE)); if (otpl.exists) tpl = otpl; } } catch (e) {}
         if (!tpl.exists) return "ERROR: template not found: " + tpl.fsName;
         doc = app.open(tpl, false); // open hidden-ish; we never save it
 
         var csvFile = U.file(U.CONFIG.csvRel);
-        try { if ($.global.UNITED_CSV) { var ov = new File(String($.global.UNITED_CSV)); if (ov.exists) csvFile = ov; } } catch (e) {}
+        try { if ($.global.BRAND_CSV) { var ov = new File(String($.global.BRAND_CSV)); if (ov.exists) csvFile = ov; } } catch (e) {}
         var csv = U.parseCSV(U.readText(csvFile));
         var C = U.CONFIG.cols;
 
         // ---- page-map: page names come from a CSV, NOT the script or the .indd.
         // Any *.csv with "pagemap" in its name inside the input folder (or an
-        // explicit $.global.UNITED_PAGEMAP). Columns: pagenumber,pagename.
+        // explicit $.global.BRAND_PAGEMAP). Columns: pagenumber,pagename.
         // If none is found, pages fall back to a padded number (01, 02, 03, ...).
         var pageMap = {}, pmName = "(none; padded numbers)";
         var pmFile = null;
-        try { if ($.global.UNITED_PAGEMAP) { var pmo = new File(String($.global.UNITED_PAGEMAP)); if (pmo.exists) pmFile = pmo; } } catch (e) {}
+        try { if ($.global.BRAND_PAGEMAP) { var pmo = new File(String($.global.BRAND_PAGEMAP)); if (pmo.exists) pmFile = pmo; } } catch (e) {}
         if (!pmFile) {
             try {
                 var inFolder = U.file(U.CONFIG.csvRel).parent; // the input/ folder
@@ -62,13 +62,13 @@
 
         // ---- runtime output options (CONFIG defaults, overridable via $.global) ----
         var fmt = String(U.CONFIG.exportFormat).toLowerCase();
-        try { if ($.global.UNITED_FORMAT) fmt = String($.global.UNITED_FORMAT).toLowerCase(); } catch (e) {}
+        try { if ($.global.BRAND_FORMAT) fmt = String($.global.BRAND_FORMAT).toLowerCase(); } catch (e) {}
         var wantPNG = (fmt === "png" || fmt === "both");
         var wantJPG = (fmt === "jpg" || fmt === "jpeg" || fmt === "both");
         if (!wantPNG && !wantJPG) { wantPNG = true; fmt = "png"; } // guard typos
 
         var writeIndd = (U.CONFIG.writeIndd === true);
-        try { if ($.global.UNITED_WRITE_INDD != null) { var wv = String($.global.UNITED_WRITE_INDD).toLowerCase(); writeIndd = (wv === "1" || wv === "true" || wv === "yes"); } } catch (e) {}
+        try { if ($.global.BRAND_WRITE_INDD != null) { var wv = String($.global.BRAND_WRITE_INDD).toLowerCase(); writeIndd = (wv === "1" || wv === "true" || wv === "yes"); } } catch (e) {}
 
         // PNG prefs — lossless, keeps crisp text edges; larger files.
         app.pngExportPreferences.pngExportRange = PNGExportRangeEnum.EXPORT_RANGE;

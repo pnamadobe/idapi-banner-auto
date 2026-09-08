@@ -5,7 +5,7 @@ output_cloud/
 *.indd.lock
 .DS_Store
 
-# --- Public repo: exclude internal United/Adobe brand assets, marketing copy,
+# --- Public repo: exclude internal brand assets, marketing copy,
 #     and the handoff doc. Supply these out-of-band for real cloud runs. ---
 assets/
 input/

@@ -1,8 +1,8 @@
 /*
- * build_template.jsx — constructs united-template.indd from scratch:
+ * build_template.jsx — constructs brand-template.indd from scratch:
  *   - one page per banner size (mixed page sizes in a single doc)
  *   - a full-bleed "hero" graphic frame (Fill Frame Proportionally)
- *   - the static United lockup as a pre-composited full-bleed "overlay" PNG
+ *   - the static Brand lockup as a pre-composited full-bleed "overlay" PNG
  *   - live "header" / "city" / "legal" text frames driven by paragraph styles
  *
  * Each swappable frame carries a Script Label (hero/header/city/legal) — the
@@ -12,7 +12,7 @@
  */
 
 #target indesign
-#include "united_lib.jsx"
+#include "brand_lib.jsx"
 
 (function () {
     var log = [];

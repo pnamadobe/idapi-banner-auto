@@ -56,11 +56,11 @@ const CFG = {
   },
   storageMode: process.env.STORAGE_MODE || "unset", // unset | adobe | s3 | azure  (see README)
   files: {
-    template: "template/united-template.indd",
-    lockup: "assets/brand/united-lockup.png",
-    csv: "input/united-variations.csv",
+    template: "template/brand-template.indd",
+    lockup: "assets/brand/brand-lockup.png",
+    csv: "input/brand-variations.csv",
     scriptEntry: "scripts/generate_variations.jsx",
-    scriptLib: "scripts/united_lib.jsx",
+    scriptLib: "scripts/brand_lib.jsx",
     shotsDir: "assets/shots",
     docFontsDir: "template/Document Fonts", // InDesign auto-activates fonts placed here
     extraFontsDir: "assets/fonts",
@@ -79,7 +79,7 @@ const exists = (rel) => fs.existsSync(abs(rel));
 const log = (...a) => console.log(...a);
 const die = (msg) => { console.error("✗ " + msg); process.exit(1); };
 
-// Parse the 10 size names + default hero straight out of united_lib.jsx so the
+// Parse the 10 size names + default hero straight out of brand_lib.jsx so the
 // harness never drifts from the InDesign side.
 function parseLib() {
   const src = fs.readFileSync(abs(CFG.files.scriptLib), "utf8");
@@ -200,11 +200,11 @@ function buildJobPayload(inputAssets, outputAssets) {
     // each asset: where the service downloads it from + where it lands in the job dir
     assets: inputAssets.map((a) => ({ source: a.source, destination: a.dest })),
     script: {
-      // the entry script; it #includes scripts/united_lib.jsx (relative)
+      // the entry script; it #includes scripts/brand_lib.jsx (relative)
       source: inputAssets.find((a) => a.dest === CFG.files.scriptEntry)?.source,
       destination: CFG.files.scriptEntry,
     },
-    // computeRoot() in united_lib resolves the working dir from the script
+    // computeRoot() in brand_lib resolves the working dir from the script
     // location, so no params are strictly required. Passed for clarity/override.
     params: { projectRoot: "." },
     outputs: outputAssets.map((o) => ({ destination: o.dest, source: o.target })),
@@ -271,7 +271,7 @@ async function main() {
   const inputs = collectInputs(rows, lib);
   const outputs = computeOutputs(rows, lib.sizes);
 
-  log(`United InDesign banner automation — cloud harness [${MODE}]`);
+  log(`Brand InDesign banner automation — cloud harness [${MODE}]`);
   log(`project root : ${ROOT}`);
   log(`sizes (${lib.sizes.length}) : ${lib.sizes.join(", ")}`);
   log(`csv rows     : ${rows.length}  (stems: ${rows.map((r) => r.outputFileName).join(", ")})`);

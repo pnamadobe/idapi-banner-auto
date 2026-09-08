@@ -50,8 +50,8 @@ Notes / edge cases to enforce in the resolver:
 - **Registration:** SPA registers via `@adobe/uix-guest` `register(...)`, same model
   as the Content Fragment Console action-bar extensions.
 - **Entitlement:** Assets View UI extensibility requires **Assets Ultimate** and is
-  gated behind an **Adobe Customer Support case** to enable for the org. ⚠️ This is a
-  provisioning dependency separate from the InDesign API entitlement.
+  gated behind an **Adobe Customer Support case** to enable for the org. ✅ Already
+  enabled on the target env (owner has stood up Assets View extensions here before).
 
 Docs:
 - Enable UI extensibility in AEM Assets View — experienceleague (`.../assets/assets-view/aem-assets-view-ui-extensibility`)
@@ -118,7 +118,7 @@ Adobe's own reference pattern (CF bulk-update: modal → Runtime action → HTTP
 4. Action lists the folder via the **AEM Assets HTTP API** (`GET /api/assets.json{path}`),
    applies the §1 rules → resolves template, both CSVs, image set, `output/`.
 5. Action produces a **fetchable URL per input** (see §5) and assembles the InDesign
-   custom-script job payload (§7), passing `UNITED_*` values via `params`.
+   custom-script job payload (§7), passing `BRAND_*` values via `params`.
 6. Action **submits** to `indesign.adobe.io/v3` custom-script execution, gets a status
    URL, **polls** to completion.
 7. InDesign runs the **unchanged** `generate_variations.jsx`; outputs land in the job's
@@ -172,7 +172,7 @@ ingested/renditioned in AEM.
 
 The whole point of the local design holds: the **same `generate_variations.jsx` runs
 unchanged**. `computeRoot()` resolves the root from the script's own location, and all
-options come in via `$.global.UNITED_*`. The Runtime action becomes the orchestrator
+options come in via `$.global.BRAND_*`. The Runtime action becomes the orchestrator
 that the local `run_local.sh` / `run.mjs` were.
 
 Concretely, the Runtime action is **`cloud/run.mjs` refactored**:
@@ -182,8 +182,8 @@ Concretely, the Runtime action is **`cloud/run.mjs` refactored**:
   sourced from the AEM pagemap CSV.
 - Keep `getAccessToken()` (IMS S2S), the payload assembly, `pollJob()`, download.
 - Implement the storage seam per §5 (`uploadInput()` / `makeOutputTarget()` → AEM).
-- Pass `UNITED_FORMAT`, `UNITED_WRITE_INDD`, `UNITED_CSV`, `UNITED_PAGEMAP`,
-  `UNITED_TEMPLATE` through the InDesign `params` object.
+- Pass `BRAND_FORMAT`, `BRAND_WRITE_INDD`, `BRAND_CSV`, `BRAND_PAGEMAP`,
+  `BRAND_TEMPLATE` through the InDesign `params` object.
 
 **Open item — hero path mapping.** Locally the CSV `hero` column resolves against
 `assets/shots/` and `shots/square/`. In the flat AEM folder, images sit at the folder
@@ -202,21 +202,21 @@ the InDesign working-dir `destination` paths so the `.jsx` finds them unchanged.
 {
   "assets": [
     { "source": { "storageType": "azure", "url": "<presigned GET for template.indd>" },
-      "destination": "template/united-template.indd" },
+      "destination": "template/brand-template.indd" },
     { "source": { "storageType": "azure", "url": "<presigned GET for variations.csv>" },
-      "destination": "input/united-variations.csv" },
+      "destination": "input/brand-variations.csv" },
     { "source": { "storageType": "azure", "url": "<presigned GET for pagemap.csv>" },
-      "destination": "input/united-pagemap.csv" },
+      "destination": "input/brand-pagemap.csv" },
     { "source": { "storageType": "azure", "url": "<presigned GET for hero-1.jpg>" },
       "destination": "assets/shots/hero-1.jpg" }
-    /* …every image + both .jsx scripts (generate_variations.jsx, united_lib.jsx)… */
+    /* …every image + both .jsx scripts (generate_variations.jsx, brand_lib.jsx)… */
   ],
   "params": {
-    "UNITED_FORMAT": "jpg",
-    "UNITED_WRITE_INDD": "1",
-    "UNITED_CSV": "input/united-variations.csv",
-    "UNITED_PAGEMAP": "input/united-pagemap.csv",
-    "UNITED_TEMPLATE": "template/united-template.indd"
+    "BRAND_FORMAT": "jpg",
+    "BRAND_WRITE_INDD": "1",
+    "BRAND_CSV": "input/brand-variations.csv",
+    "BRAND_PAGEMAP": "input/brand-pagemap.csv",
+    "BRAND_TEMPLATE": "template/brand-template.indd"
   },
   "outputs": [ /* omit → Adobe temp (24h presigned); or Azure/S3 target */ ]
 }
@@ -225,7 +225,7 @@ the InDesign working-dir `destination` paths so the `.jsx` finds them unchanged.
 - `destination` is a path in the job working dir; **no `..` or leading `/`**, must be a
   valid filename. Mirroring the local layout (`template/`, `input/`, `assets/shots/`,
   `scripts/`) is what lets `computeRoot()` work unchanged.
-- Scripts (`generate_variations.jsx`, `united_lib.jsx`) are shipped as **input assets**
+- Scripts (`generate_variations.jsx`, `brand_lib.jsx`) are shipped as **input assets**
   too, OR pre-registered as the custom script bundle. Decide at build (registered bundle
   is cleaner + versioned; assets-per-run is simpler to iterate). ⚠️ verify how the
   script bundle vs. `assets[]` scripts interact.
@@ -236,7 +236,7 @@ the InDesign working-dir `destination` paths so the `.jsx` finds them unchanged.
 
 ## 8. Provisioning / prerequisites checklist
 
-- [ ] **Assets Ultimate** entitlement + **Support case** to enable Assets View UI extensibility. *(new dependency — start this now, it's org-gated like the InDesign API was)*
+- [x] **Assets Ultimate** entitlement + **Support case** to enable Assets View UI extensibility. *(already enabled on the target env.)*
 - [x] InDesign API — provisioned on **stage** (2026-09-08); prod pending.
 - [ ] Adobe Developer Console **App Builder** project (can be the same project holding the InDesign S2S credential).
 - [ ] AEM **technical account** service credentials with jcr:read + rep:write on the target folder tree.
@@ -255,7 +255,7 @@ the InDesign working-dir `destination` paths so the `.jsx` finds them unchanged.
 3. Implement the `generate-banners` Runtime action (refactor of `cloud/run.mjs` per §6).
 4. Wire storage seam per §5; add `aem-upload` dependency for write-back.
 5. Local test with `aio app run` against stage AEM + stage InDesign API on the 2-row
-   `united-variations-TEST.csv`.
+   `brand-variations-TEST.csv`.
 6. Deploy (`aio app deploy`), submit the extension for org approval, enable via Extension
    Manager for the target environment.
 

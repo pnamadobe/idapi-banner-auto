@@ -16,12 +16,12 @@ SCRIPT="$ROOT/scripts/generate_variations.jsx"
 # Build a tiny wrapper .jsx that sets any requested globals, then evals the
 # exporter. (Passing options as globals keeps generate_variations.jsx the single
 # entry point and mirrors how the cloud harness will inject inputs.)
-WRAP="${TMPDIR:-/tmp}/united_run_$$.jsx"   # .jsx so InDesign's do-script accepts it
+WRAP="${TMPDIR:-/tmp}/brand_run_$$.jsx"   # .jsx so InDesign's do-script accepts it
 {
-  [ -n "${FORMAT:-}" ]     && echo "\$.global.UNITED_FORMAT = '${FORMAT}';"
-  [ -n "${WRITE_INDD:-}" ] && echo "\$.global.UNITED_WRITE_INDD = '${WRITE_INDD}';"
-  [ -n "${CSV:-}" ]        && echo "\$.global.UNITED_CSV = '${CSV}';"
-  [ -n "${TEMPLATE:-}" ]   && echo "\$.global.UNITED_TEMPLATE = '${TEMPLATE}';"
+  [ -n "${FORMAT:-}" ]     && echo "\$.global.BRAND_FORMAT = '${FORMAT}';"
+  [ -n "${WRITE_INDD:-}" ] && echo "\$.global.BRAND_WRITE_INDD = '${WRITE_INDD}';"
+  [ -n "${CSV:-}" ]        && echo "\$.global.BRAND_CSV = '${CSV}';"
+  [ -n "${TEMPLATE:-}" ]   && echo "\$.global.BRAND_TEMPLATE = '${TEMPLATE}';"
   echo "\$.evalFile(new File('${SCRIPT}'));"
 } > "$WRAP"
 

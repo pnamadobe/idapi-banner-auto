@@ -1,5 +1,5 @@
 /*
- * united_lib.jsx  — shared config + helpers for the United banner automation.
+ * brand_lib.jsx  — shared config + helpers for the Brand banner automation.
  *
  * Single source of truth. Both build_template.jsx and generate_variations.jsx
  * #include this file. Everything that changes when moving local -> InDesign
@@ -13,8 +13,8 @@ var U = (function () {
         // ---- the one path to edit when relocating the project ----
         projectRoot: "/Users/pnam/Sandbox/ids-banner-auto-local",
 
-        templateRel: "template/united-template.indd",
-        csvRel:      "input/united-variations.csv",
+        templateRel: "template/brand-template.indd",
+        csvRel:      "input/brand-variations.csv",
         shotsRel:    "assets/shots",
         brandRel:    "assets/brand",
         outputRel:   "output",
@@ -22,14 +22,14 @@ var U = (function () {
         exportPPI:   72,   // 72 = native pixel dims. 144 = @2x.
 
         // ---- output options (each overridable per-run via $.global; see run_local.sh) ----
-        exportFormat: "jpg",       // "png" | "jpg" | "both"   ($.global.UNITED_FORMAT)
+        exportFormat: "jpg",       // "png" | "jpg" | "both"   ($.global.BRAND_FORMAT)
         jpegQuality:  "MAXIMUM",   // LOW | MEDIUM | HIGH | MAXIMUM (JPEG only)
-        writeIndd:    true,        // also save an editable .indd per row, next to the images ($.global.UNITED_WRITE_INDD=0 to skip)
+        writeIndd:    true,        // also save an editable .indd per row, next to the images ($.global.BRAND_WRITE_INDD=0 to skip)
 
         cols: { file: "outputFileName", hero: "hero", city: "city", header: "header" }
     };
 
-    // The reusable United lockup (pill + globe + wordmark) is one asset placed
+    // The reusable Brand lockup (pill + globe + wordmark) is one asset placed
     // per page. Its intrinsic aspect (w/h) — used to size the lockup frame.
     var LOCKUP_ASPECT = 5.8125;
 
@@ -106,7 +106,7 @@ var U = (function () {
     //   3) cloud/relocated — derive from this script's own location (…/scripts/<file>)
     //   4) last resort — current working directory
     function computeRoot() {
-        try { if ($.global.UNITED_PROJECT_ROOT) return String($.global.UNITED_PROJECT_ROOT); } catch (e) {}
+        try { if ($.global.BRAND_PROJECT_ROOT) return String($.global.BRAND_PROJECT_ROOT); } catch (e) {}
         try { if (new Folder(CONFIG.projectRoot).exists) return CONFIG.projectRoot; } catch (e) {}
         try {
             var self = new File($.fileName);
@@ -124,7 +124,7 @@ var U = (function () {
         var sq = new File(ROOT + "/" + CONFIG.shotsRel + "/square/" + name);
         return sq.exists ? sq : primary; // else primary (non-existent) so caller reports "missing"
     }
-    function lockupAsset() { return new File(ROOT + "/" + CONFIG.brandRel + "/united-lockup.png"); }
+    function lockupAsset() { return new File(ROOT + "/" + CONFIG.brandRel + "/brand-lockup.png"); }
     function outFile(name) { return new File(ROOT + "/" + CONFIG.outputRel + "/" + name); }
 
     function readText(f) { f.encoding = "UTF-8"; f.open("r"); var s = f.read(); f.close(); return s; }

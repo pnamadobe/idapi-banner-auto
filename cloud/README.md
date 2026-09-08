@@ -14,7 +14,7 @@ node cloud/run.mjs --submit       # full run: auth → upload → submit → pol
 
 `--dry-run` writes `cloud/_dryrun/{inputs,outputs,job-payload}.json` so you can
 inspect exactly what would be sent. It also parses the 10 size names + default
-hero straight out of `scripts/united_lib.jsx`, so the harness can never drift
+hero straight out of `scripts/brand_lib.jsx`, so the harness can never drift
 from the InDesign side.
 
 ## Setup
@@ -29,7 +29,7 @@ from the InDesign side.
 
 Inputs are mirrored into the job's working directory preserving the local layout
 (`template/`, `assets/shots/`, `assets/brand/`, `scripts/`, `input/`, `output/`).
-`computeRoot()` in `united_lib.jsx` resolves the root from the running script's
+`computeRoot()` in `brand_lib.jsx` resolves the root from the running script's
 own location (`…/scripts/<file>` → parent-of-parent), so the identical `.jsx`
 works locally and in the cloud with no edits.
 
@@ -41,8 +41,8 @@ the default hero, every hero referenced by the CSV, and any font files under
 
 InDesign auto-activates fonts placed in a **`Document Fonts`** folder next to the
 document — so drop the Source Sans 3 files in `template/Document Fonts/` and they
-travel with the job. Source Sans 3 is OFL (safe to bundle). United's licensed
-brand face is a separate licensing decision.
+travel with the job. Source Sans 3 is OFL (safe to bundle). The brand's licensed
+typeface is a separate licensing decision.
 
 ## Storage (the one piece to finalize)
 
