@@ -268,3 +268,60 @@ the InDesign working-dir `destination` paths so the `.jsx` finds them unchanged.
 - InDesign **submit response shape** + polling field (already flagged in HANDOFF Task B;
   `run.mjs pollJob()` currently guesses).
 - Custom-script capability **endpoint/version** path under `indesign.adobe.io/v3`.
+
+---
+
+## 11. Verified InDesign API mechanics (2026-09-08, live on stage)
+
+Confirmed by hitting the stage API with the IMSS service token:
+
+- **Host:** `https://indesign-stage.adobe.io` (stage). Prod: `https://indesign.adobe.io`.
+- **Register a capability (custom script):** `POST /v3/capability`, `multipart/form-data`,
+  field name **`file`** = the ZIP bundle. Returns `{ url, capability }` where `url` is the
+  execution endpoint, e.g. `https://…/v3/<ID>/<capability-name>`.
+- **Bundle:** zip WITHOUT a parent folder, containing `manifest.json` + the entry `.jsx`
+  (+ helper `.jsx` files). Real `manifest.json` shape (NOT my first guess):
+  ```json
+  {
+    "manifestVersion": "1.0.0",
+    "name": "idapi-banner-exporter",
+    "host": { "app": "indesign", "minVersion": "16.0.1", "maxVersion": "99.9.9" },
+    "version": "1.0.0",
+    "apiEntryPoints": [
+      { "type": "capability", "path": "generate_variations.jsx", "language": "extendscript" }
+    ]
+  }
+  ```
+- **Execute:** `POST <execution url>`, `application/json`, body `{ assets, params, outputs? }`.
+  `assets[].source` accepts a plain `{ "url": "<presigned/public URL>" }` (storageType optional);
+  `assets[].destination` = working-dir path. Response: `{ "statusUrls": "https://…/v3/status/<jobId>" }`.
+- **Poll:** `GET /v3/status/<jobId>` → states not-started / running / completed / failed.
+- **Headers (service token):** `Authorization: Bearer`, `x-api-key: <client_id>`,
+  `x-gw-ims-org-id: <org>` (required — GET returns 400 without it, 200 with it).
+- **Storage:** inputs MUST be real cloud-storage presigned URLs (S3/Azure/Dropbox/GCS/AEM);
+  Adobe temporary storage is **outputs-only** (omit `outputs` → 24h presigned result URLs).
+- `run.mjs` defaults to update for the build: register `POST /v3/capability`; the
+  current `INDESIGN_SCRIPT_PATH=/v3/capabilities/script` guess is wrong.
+
+## 12. ⛔ Current blocker — writes rejected (org/entitlement)
+
+The stage IMSS service token authenticates and **reads** fine (`--ping` GET = 200), but
+every **write** (`POST /v3/capability` register, and by extension execute) returns
+**400 `{"message":"Unable to get the IMS Organization …","errorCode":"invalid_parameters"}`** —
+tried the org via `x-gw-ims-org-id` header, `?imsOrgId=` query, and an `orgId` form field;
+all identical. GET honors the same header (400 without → 200 with), so it is not a header
+placement issue.
+
+Root cause (hypothesis): the org (`4A603BC061E191130A495FEF@AdobeOrg`, "Adobe Internal
+Peter Nam") is **not entitled to Firefly Services**, so the API allows reads but blocks
+writes — the same gap as the Dev Console "License required." A bare `system` service token
+can't supply the org entitlement the write path needs.
+
+Ways forward:
+1. **Get the org entitled to Firefly Services (FFS SKU)** — Admin Console product assign, or
+   request via Slack `#adobeio-developer-console` / DL `idservices@adobe.com`. Then writes work.
+2. **Use an already-entitled org** — test the **prod** `pnam-ffs-api` client against prod
+   `indesign.adobe.io` (needs prod permanent-auth-code + prod IMS + that org's id). If the
+   prod org is FFS-entitled, register/execute should succeed there.
+3. Confirm with `idservices@adobe.com` whether a `system` service token is even supported for
+   capability writes, or whether an OAuth S2S (Dev Console) credential is required.
