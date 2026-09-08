@@ -47,8 +47,12 @@ const CFG = {
     // Verified against the InDesign APIs / Firefly Services Dev Console onboarding.
     scopes: process.env.FFS_SCOPES || "openid,AdobeID,creative_sdk,ff_apis,indesign_services",
     // Pre-generated bearer token (e.g. IMSS "short-lived service token"). When set,
-    // it is used directly and the client_credentials grant is skipped.
+    // it is used directly and no exchange happens. Ephemeral — testing only.
     accessToken: process.env.FFS_ACCESS_TOKEN || "",
+    // IMSS "Permanent Authorization Code" (durable). Exchanged for a fresh
+    // access token per run via grant_type=authorization_code. This is the
+    // production path for an IMSS service-token client.
+    authCode: process.env.FFS_AUTH_CODE || "",
   },
   api: {
     base: process.env.INDESIGN_API_BASE || "https://indesign.adobe.io", // VERIFY
@@ -167,11 +171,32 @@ function computeOutputs(rows, sizes) {
 // IMS auth (stable, fully implemented)
 // ----------------------------------------------------------------------------
 async function getAccessToken() {
-  // Pre-supplied token wins (IMSS service-token clients don't do client_credentials).
+  // 1) Pre-supplied token wins — ephemeral, for a quick manual test only.
   if (CFG.ims.accessToken) {
     return { access_token: CFG.ims.accessToken, token_type: "bearer", expires_in: "preset (FFS_ACCESS_TOKEN)" };
   }
-  if (!CFG.ims.clientId || !CFG.ims.clientSecret) die("Set FFS_ACCESS_TOKEN (IMSS short-lived service token) or FFS_CLIENT_ID/FFS_CLIENT_SECRET (OAuth S2S). See cloud/.env.example");
+  // 2) IMSS permanent authorization code → exchange for a fresh access token (durable).
+  if (CFG.ims.authCode) {
+    if (!CFG.ims.clientId || !CFG.ims.clientSecret) die("FFS_AUTH_CODE needs FFS_CLIENT_ID + FFS_CLIENT_SECRET too");
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CFG.ims.clientId,
+      client_secret: CFG.ims.clientSecret,
+      code: CFG.ims.authCode,
+    });
+    if (CFG.ims.scopes) body.set("scope", CFG.ims.scopes);
+    const res = await fetch(CFG.ims.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    if (!res.ok) die(`IMS auth-code exchange failed: ${res.status} ${await res.text()}`);
+    return res.json(); // { access_token, token_type, expires_in }
+  }
+  // 3) OAuth Server-to-Server (client_credentials) — standard FFS path once entitled.
+  if (!CFG.ims.clientId || !CFG.ims.clientSecret) {
+    die("Set one auth path in cloud/.env: FFS_ACCESS_TOKEN, or FFS_AUTH_CODE (+ client id/secret), or FFS_CLIENT_ID/FFS_CLIENT_SECRET. See cloud/.env.example");
+  }
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: CFG.ims.clientId,
