@@ -4,9 +4,9 @@
 
 Turn a single InDesign template and a row of content into a *complete* set of
 production-ready banners — every ad size, every localized variant — without a
-designer ever touching InDesign. The same design script runs on your laptop for
-development and **headless in the cloud** via the Adobe InDesign API, so what you
-prototype is exactly what ships.
+designer ever touching InDesign. It runs **headless in the cloud** on the Adobe
+InDesign API: no desktop app, no manual export, no workstation in the loop — a
+whole campaign's worth of on-brand banners, rendered on demand.
 
 ![Banners rendered from one template — multiple placements, English and Spanish headlines, and two campaign versions](examples/showcase-hero.jpg)
 
@@ -124,10 +124,10 @@ flowchart LR
 
 ## Why the approach is nice
 
-- **Same script, local *and* cloud.** `generate_variations.jsx` runs identically
-  on a desktop InDesign and on the Adobe InDesign API — the harness resolves its
-  working directory from the script's own location, so there's **zero drift**
-  between what you test and what runs in production.
+- **Cloud-rendered and deterministic.** `generate_variations.jsx` runs headless
+  on the Adobe InDesign API and resolves its own working directory, so the same
+  job produces the same banners every time — no workstation, no manual setup,
+  nothing to babysit.
 - **Folder-as-key convention.** A job is just a folder: the `*template*.indd`,
   a variations CSV, a `*pagemap*` CSV, the images, and an `output/` folder. No
   config files, no database — the layout *is* the contract.
@@ -146,7 +146,7 @@ flowchart LR
 | Layer | What it does |
 |------|--------------|
 | **`scripts/generate_variations.jsx`** | The engine. Reads the CSV, lays out every configured size per row, places hero/lockup art, fits copy, exports JPG + INDD. |
-| **`scripts/brand_lib.jsx`** | Shared library: size definitions, fonts, defaults, and the working-dir resolver that makes local == cloud. |
+| **`scripts/brand_lib.jsx`** | Shared library: size definitions, fonts, defaults, and the working-dir resolver the cloud job relies on. |
 | **`scripts/build_template.jsx`** | Generates the master template from spec, so the design itself is reproducible. |
 | **`cloud/run.mjs`** | The harness. Authenticates to Adobe IMS, registers the script as an InDesign *capability*, uploads inputs, runs the job, polls, and retrieves outputs. |
 | **AEM Assets View extension** *(designed)* | The one-click UI: an Action Bar button that hands the selected folder to an App Builder Runtime action, which calls the InDesign API and writes results back to AEM. |
@@ -154,9 +154,9 @@ flowchart LR
 ### Pipeline phases
 
 ```
-Phase 1  Local render          ✅  proven — the .jsx produces the full size-set locally
-Phase 2  Cloud render          🟡  harness ready (auth, --register, --submit); gated on API entitlement
-Phase 3  AEM one-click         ⚪  designed — Runtime action + Assets View extension
+Phase 1  Rendering engine       ✅  proven — one template + CSVs → the full size-set
+Phase 2  Cloud rendering        🟡  harness ready (auth, --register, --submit); gated on API entitlement
+Phase 3  AEM one-click          ⚪  designed — Runtime action + Assets View extension
 ```
 
 ---
@@ -176,13 +176,7 @@ above.
 
 ## Quick start
 
-**Local** — render the full set with a desktop InDesign:
-
-```bash
-./run_local.sh
-```
-
-**Cloud** — drive the Adobe InDesign API (Node ≥ 18, zero deps):
+Drive the Adobe InDesign API from the cloud harness (Node ≥ 18, zero deps):
 
 ```bash
 node cloud/run.mjs --dry-run      # assemble & print the exact plan — no credentials needed
@@ -216,12 +210,14 @@ the results.
 
 ## Status & roadmap
 
-This is an active build. The local pipeline is proven; the cloud harness is
-complete and validated end-to-end against the live InDesign API; the one-click
-AEM experience is designed and next in line once cloud rendering is entitled.
+This is an active build. The rendering pipeline is proven, and the cloud harness
+is complete — IMS auth, capability registration, and job orchestration, verified
+against the live InDesign API. The first end-to-end cloud render is gated on
+Firefly Services entitlement; the one-click AEM experience is designed and next
+in line.
 
 - [x] Reproducible template generation
-- [x] Full local size-set rendering
+- [x] Full size-set rendering (one template → every placement)
 - [x] Cloud harness: IMS auth, capability registration, job orchestration
 - [ ] First headless cloud render (pending InDesign API / Firefly Services entitlement)
 - [ ] App Builder Runtime action + storage wiring

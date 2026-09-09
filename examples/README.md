@@ -124,18 +124,16 @@ Drop the hero images referenced by the CSV into `assets/shots/` (or
 
 ## Step 5 — Render
 
-**Locally** (desktop InDesign) — the exporter reads globals for the template, CSV,
-and pagemap, so point them at your files:
+Render headless in the cloud on the Adobe InDesign API. The harness registers your
+template as a capability, runs the job, and retrieves the output — no desktop app
+involved:
 
 ```bash
-BRAND_TEMPLATE=…/your-template.indd \
-BRAND_CSV=…/your-variations.csv \
-BRAND_PAGEMAP=…/your-pagemap.csv \
-FORMAT=jpg bash run_local.sh
+node cloud/run.mjs --register    # register the template + script as a capability
+node cloud/run.mjs --submit      # run the job → poll → download the results
 ```
 
-**In the cloud** (headless, via the Adobe InDesign API) — see
-[`cloud/README.md`](../cloud/README.md).
+See [`cloud/README.md`](../cloud/README.md) for credentials and the storage seam.
 
 ## Step 6 — Collect the output
 
