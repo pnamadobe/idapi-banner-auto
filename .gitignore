@@ -16,3 +16,6 @@ HANDOFF.md
 scripts/_extracted_specs.json
 # Internal ops/status doc (org ids, colleague names, internal channels) — keep local.
 cloud/AEM-EXTENSION-DESIGN.md
+
+# Local-only debranded render helper (hardcoded personal paths)
+run_debrand.sh

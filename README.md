@@ -8,6 +8,10 @@ designer ever touching InDesign. The same design script runs on your laptop for
 development and **headless in the cloud** via the Adobe InDesign API, so what you
 prototype is exactly what ships.
 
+![Banners rendered from one template — multiple placements, English and Spanish headlines, and two campaign versions](examples/showcase-hero.jpg)
+
+<sub>Every banner above came from **one** InDesign template + a spreadsheet of variations — different placements, English/Spanish headlines, and multiple campaign versions. All output is brand-neutral sample content.</sub>
+
 ---
 
 ## The problem this kills
@@ -156,6 +160,19 @@ Phase 3  AEM one-click         ⚪  designed — Runtime action + Assets View ex
 ```
 
 ---
+
+## See it in action
+
+![The same template rendered across every placement shape, in English and Spanish](examples/showcase-collage.jpg)
+
+*One template, rendered across every placement — leaderboard, billboard, half-page,
+med-rectangle, app card, social feed, story — in English and Spanish, in multiple
+campaign versions. Change the template once and all of these regenerate.*
+
+👉 **Want to build your own?** The [**examples/**](examples/README.md) folder is a
+complete, brand-neutral walkthrough: author your template, write the variations
+CSV and pagemap CSV, render, and collect the output — with the sample files used
+above.
 
 ## Quick start
 
