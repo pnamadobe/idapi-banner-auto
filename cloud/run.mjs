@@ -6,9 +6,20 @@
  * Modes:
  *   node cloud/run.mjs --dry-run     (default) assemble + print the whole plan; no creds needed
  *   node cloud/run.mjs --check-auth  fetch an IMS access token and report; needs creds
- *   node cloud/run.mjs --submit      full run: auth -> upload -> submit -> poll -> download
+ *   node cloud/run.mjs --ping        GET /v3/scripts reachability probe (reads; service token OK)
+ *   node cloud/run.mjs --register    register the capability bundle (POST /v3/capability)
+ *   node cloud/run.mjs --submit      full run: auth -> upload -> execute -> poll -> download
  *
- * Requires Node >= 18 (global fetch). Zero npm dependencies.
+ * ⚠️ AUTH POLICY (confirmed by the InDesign API team, 2026-09-09):
+ *   Custom-script/capability REGISTRATION is privileged — it accepts ONLY a
+ *   Developer Console OAuth Server-to-Server token. An IMSS service token is
+ *   rejected on the write path with 400 "Unable to get the IMS Organization"
+ *   (reads/GET still work with a service token). So --register (and the register
+ *   step of --submit) require the client_credentials path below, from a Dev
+ *   Console "InDesign API – Firefly Services" project. That project only appears
+ *   once the IMS org is entitled to the Firefly Services product.
+ *
+ * Requires Node >= 18 (global fetch, FormData/Blob). Zero npm dependencies.
  *
  * ⚠️ VERIFY-flagged spots below are the InDesign-API specifics I could not
  * re-confirm against live docs in this session (endpoint paths, asset JSON
@@ -44,8 +55,11 @@ const CFG = {
     endpoint: process.env.IMS_ENDPOINT || "https://ims-na1.adobelogin.com/ims/token/v3",
     clientId: process.env.FFS_CLIENT_ID || "",
     clientSecret: process.env.FFS_CLIENT_SECRET || "",
-    // Verified against the InDesign APIs / Firefly Services Dev Console onboarding.
-    scopes: process.env.FFS_SCOPES || "openid,AdobeID,creative_sdk,ff_apis,indesign_services",
+    // Scopes for the OAuth Server-to-Server (client_credentials) path — the Dev
+    // Console token used for registration. Current InDesign guidance is to
+    // request `firefly_api`; `indesign_services` stays for backward-compat.
+    // (The IMSS service-token/auth-code path overrides this with FFS_SCOPES=system.)
+    scopes: process.env.FFS_SCOPES || "openid,AdobeID,firefly_api,ff_apis,indesign_services",
     // Pre-generated bearer token (e.g. IMSS "short-lived service token"). When set,
     // it is used directly and no exchange happens. Ephemeral — testing only.
     accessToken: process.env.FFS_ACCESS_TOKEN || "",
@@ -58,9 +72,14 @@ const CFG = {
     orgId: process.env.FFS_ORG_ID || process.env.IMS_ORG_ID || "",
   },
   api: {
-    base: process.env.INDESIGN_API_BASE || "https://indesign.adobe.io", // VERIFY
-    // Custom-script capability endpoint — VERIFY path/version in current docs.
-    scriptPath: process.env.INDESIGN_SCRIPT_PATH || "/v3/capabilities/script",
+    base: process.env.INDESIGN_API_BASE || "https://indesign.adobe.io",
+    // Register a custom-script capability. VERIFIED endpoint: POST /v3/capability
+    // (multipart field `file` = the bundle zip). Returns { url, capability } where
+    // `url` is the execution endpoint. Requires a Dev Console OAuth S2S token.
+    registerPath: process.env.INDESIGN_REGISTER_PATH || "/v3/capability",
+    // Execution endpoint returned by registration (POST it with the job JSON).
+    // Capture it from --register output into INDESIGN_EXECUTE_URL for --submit.
+    executeUrl: process.env.INDESIGN_EXECUTE_URL || "",
     pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 4000),
     pollTimeoutMs: Number(process.env.POLL_TIMEOUT_MS || 600000),
   },
@@ -80,6 +99,7 @@ const CFG = {
 
 const args = new Set(process.argv.slice(2));
 const MODE = args.has("--submit") ? "submit"
+  : args.has("--register") ? "register"
   : args.has("--ping") ? "ping"
   : args.has("--check-auth") ? "check-auth"
   : "dry-run";
@@ -174,6 +194,80 @@ function computeOutputs(rows, sizes) {
 }
 
 // ----------------------------------------------------------------------------
+// Minimal STORE (no compression) ZIP writer — zero deps, deterministic. The
+// capability bundle is a few small text files, so no compression is needed.
+// Files land at the zip root (no parent folder), as the InDesign API requires.
+// ----------------------------------------------------------------------------
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function zipStore(files) {
+  // files: [{ name, data: Buffer }]
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(f.name, "utf8");
+    const data = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data);
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);   // local file header signature
+    local.writeUInt16LE(20, 4);           // version needed to extract
+    local.writeUInt16LE(0, 6);            // general purpose flags
+    local.writeUInt16LE(0, 8);            // compression method: 0 = store
+    local.writeUInt16LE(0, 10);           // mod time (fixed → deterministic)
+    local.writeUInt16LE(0x21, 12);        // mod date (1980-01-01)
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18); // compressed size
+    local.writeUInt32LE(data.length, 22); // uncompressed size
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);           // extra field length
+    parts.push(local, name, data);
+
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(0x02014b50, 0);     // central dir header signature
+    cen.writeUInt16LE(20, 4);             // version made by
+    cen.writeUInt16LE(20, 6);             // version needed
+    cen.writeUInt16LE(0, 8);
+    cen.writeUInt16LE(0, 10);
+    cen.writeUInt16LE(0, 12);
+    cen.writeUInt16LE(0x21, 14);
+    cen.writeUInt32LE(crc, 16);
+    cen.writeUInt32LE(data.length, 20);
+    cen.writeUInt32LE(data.length, 24);
+    cen.writeUInt16LE(name.length, 28);
+    cen.writeUInt16LE(0, 30);             // extra len
+    cen.writeUInt16LE(0, 32);             // comment len
+    cen.writeUInt16LE(0, 34);             // disk number
+    cen.writeUInt16LE(0, 36);             // internal attrs
+    cen.writeUInt32LE(0, 38);             // external attrs
+    cen.writeUInt32LE(offset, 42);        // local header offset
+    central.push(cen, name);
+    offset += local.length + name.length + data.length;
+  }
+  const centralBuf = Buffer.concat(central);
+  const centralOffset = offset;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);       // end of central dir signature
+  end.writeUInt16LE(files.length, 8);     // entries on this disk
+  end.writeUInt16LE(files.length, 10);    // total entries
+  end.writeUInt32LE(centralBuf.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([...parts, centralBuf, end]);
+}
+
+// ----------------------------------------------------------------------------
 // IMS auth (stable, fully implemented)
 // ----------------------------------------------------------------------------
 async function getAccessToken() {
@@ -190,7 +284,10 @@ async function getAccessToken() {
       client_secret: CFG.ims.clientSecret,
       code: CFG.ims.authCode,
     });
-    if (CFG.ims.scopes) body.set("scope", CFG.ims.scopes);
+    // Service-token exchange scope is the constant `system` (verified). The API
+    // scopes ride from the IMSS client config; requesting them here → invalid_scope.
+    // This is independent of CFG.ims.scopes (which is for the OAuth S2S path).
+    body.set("scope", process.env.FFS_AUTH_CODE_SCOPE || "system");
     const res = await fetch(CFG.ims.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -249,8 +346,79 @@ function buildJobPayload(inputAssets, outputAssets) {
   };
 }
 
+// Manifest for the capability bundle. Shape verified against the InDesign API
+// docs: host is an object, apiEntryPoints[].path names the entry file in the
+// zip, language = "extendscript".
+function buildManifest() {
+  return {
+    manifestVersion: "1.0.0",
+    name: process.env.CAPABILITY_NAME || "idapi-banner-exporter",
+    host: { app: "indesign", minVersion: "16.0.1", maxVersion: "99.9.9" },
+    version: "1.0.0",
+    apiEntryPoints: [
+      { type: "capability", path: path.basename(CFG.files.scriptEntry), language: "extendscript" },
+    ],
+  };
+}
+
+// Register the capability: POST /v3/capability, multipart field `file` = a zip of
+// manifest.json + entry .jsx (+ helper lib) at the root. REQUIRES a Dev Console
+// OAuth S2S token (service tokens are rejected here — see AUTH POLICY up top).
+async function registerCapability(token) {
+  const entry = path.basename(CFG.files.scriptEntry);   // generate_variations.jsx
+  const files = [
+    { name: "manifest.json", data: Buffer.from(JSON.stringify(buildManifest(), null, 2)) },
+    { name: entry, data: fs.readFileSync(abs(CFG.files.scriptEntry)) },
+  ];
+  if (exists(CFG.files.scriptLib)) {
+    files.push({ name: path.basename(CFG.files.scriptLib), data: fs.readFileSync(abs(CFG.files.scriptLib)) });
+  }
+  const zip = zipStore(files);
+
+  const fd = new FormData();
+  fd.append("file", new Blob([zip], { type: "application/zip" }), "capability.zip");
+
+  const url = CFG.api.base + CFG.api.registerPath;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token.access_token}`,
+      "x-api-key": CFG.ims.clientId,
+      ...(CFG.ims.orgId ? { "x-gw-ims-org-id": CFG.ims.orgId } : {}),
+    },
+    body: fd,
+  });
+  const text = await res.text();
+  log(`register POST ${url}`);
+  log(`  bundle   : ${files.map((f) => f.name).join(", ")} (${zip.length} bytes)`);
+  log(`  x-api-key: ${CFG.ims.clientId || "(none — set FFS_CLIENT_ID)"}`);
+  log(`  status   : ${res.status} ${res.statusText}`);
+  log(`  body     : ${text.slice(0, 600)}`);
+  if (res.ok) {
+    let j; try { j = JSON.parse(text); } catch {}
+    if (j?.url) {
+      log(`\n✓ registered. execution url:\n    ${j.url}`);
+      log(`  → add to cloud/.env:  INDESIGN_EXECUTE_URL=${j.url}`);
+    } else {
+      log(`\n✓ registered (inspect the body above for the execution url).`);
+    }
+    return j;
+  }
+  if (/Unable to get the IMS Organization/i.test(text)) {
+    log(`\n❌ 400 org error → this token cannot register. Registration accepts ONLY a`);
+    log(`   Developer Console OAuth Server-to-Server token, not an IMSS service token.`);
+    log(`   (Set FFS_CLIENT_ID/FFS_CLIENT_SECRET from a Dev Console "InDesign API –`);
+    log(`   Firefly Services" project, clear FFS_AUTH_CODE, and use client_credentials.)`);
+  } else if (/40320\d|not allowed to call this service/i.test(text)) {
+    log(`\n❌ 403 client not allowlisted → ask the InDesign API team to allowlist this`);
+    log(`   client id (${CFG.ims.clientId}) for the register endpoint on this env.`);
+  }
+  process.exit(1);
+}
+
 async function submitJob(token, payload) {
-  const url = CFG.api.base + CFG.api.scriptPath;
+  const url = CFG.api.executeUrl;
+  if (!url) die("no execute URL — run --register first, then set INDESIGN_EXECUTE_URL in cloud/.env");
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -338,6 +506,13 @@ async function main() {
     else if (res.status === 401) log("  → 401: token not accepted (stage token vs prod host? wrong x-api-key?).");
     else if (res.status === 403) log("  → 403: authenticated but not entitled for this API on this env.");
     else if (res.status === 404) log("  → 404: host reachable but path off; try INDESIGN_PING_PATH.");
+    return;
+  }
+
+  // Register the capability bundle. Needs a Dev Console OAuth S2S token.
+  if (MODE === "register") {
+    const tok = await getAccessToken();
+    await registerCapability(tok);
     return;
   }
 

@@ -14,3 +14,5 @@ input/
 template/
 HANDOFF.md
 scripts/_extracted_specs.json
+# Internal ops/status doc (org ids, colleague names, internal channels) — keep local.
+cloud/AEM-EXTENSION-DESIGN.md
