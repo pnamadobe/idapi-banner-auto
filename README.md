@@ -34,13 +34,15 @@ slow, it doesn't scale, and every manual step is a chance to drift off-brand.
                  │  generate_*.jsx    │   — the brand template is the source of truth
                  └───────────────────┘
                            ▼
-        10 or so sizes × N variations, on-brand
+        every size × every variation, on-brand
         rendered as JPG + editable INDD — in seconds, unattended
 ```
 
 - **The template holds the design.** Colors, type, spacing, logo lockups,
   grid — all governed by one InDesign file. Change the template, and *every*
-  output updates. No copy-paste, no drift.
+  output updates. No copy-paste, no drift. The set of sizes is defined in the
+  template, so any org can run **as many layout variations as it needs** —
+  nothing here is fixed to a particular count.
 - **The CSV holds the content.** One row per variation: headline, city, hero
   image, output name. Add a row → get a full size-set for it.
 - **The script does the work.** It lays out every size for every row, places the
@@ -69,9 +71,10 @@ sizes, that distinction is decisive.
 
 **A layout tool, purpose-built for this work**
 
-- **Native multi-size documents.** Ten banner sizes are simply ten pages — with
-  independent geometries — in a single document. That is InDesign's natural model;
-  Photoshop leans on artboards, which are a weaker fit for distinct page sizes.
+- **Native multi-size documents.** However many banner sizes you need are simply
+  that many pages — each with its own geometry — in a single document. That is
+  InDesign's natural model; Photoshop leans on artboards, which are a weaker fit
+  for distinct page sizes.
 - **Centralized paragraph and character styles.** Brand typography is defined once
   and applied everywhere; change a style and every instance updates in lockstep.
 - **Frame-based image fitting.** Placing artwork into defined frames (fill
@@ -138,7 +141,7 @@ flowchart LR
 
 | Layer | What it does |
 |------|--------------|
-| **`scripts/generate_variations.jsx`** | The engine. Reads the CSV, lays out all 10 sizes per row, places hero/lockup art, fits copy, exports JPG + INDD. |
+| **`scripts/generate_variations.jsx`** | The engine. Reads the CSV, lays out every configured size per row, places hero/lockup art, fits copy, exports JPG + INDD. |
 | **`scripts/brand_lib.jsx`** | Shared library: size definitions, fonts, defaults, and the working-dir resolver that makes local == cloud. |
 | **`scripts/build_template.jsx`** | Generates the master template from spec, so the design itself is reproducible. |
 | **`cloud/run.mjs`** | The harness. Authenticates to Adobe IMS, registers the script as an InDesign *capability*, uploads inputs, runs the job, polls, and retrieves outputs. |
@@ -214,4 +217,5 @@ Adobe InDesign · Adobe InDesign API (Firefly Services) · ExtendScript · Adobe
 
 ---
 
-*Brand-agnostic by design — bring your own template, fonts, and content.*
+*Brand- and size-agnostic by design — bring your own template, fonts, content,
+and as many layout variations as you need.*
