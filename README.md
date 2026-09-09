@@ -1,4 +1,4 @@
-# 🎨 Banner Auto — on-brand banners at the speed of a spreadsheet
+# 🎨 Banner Automation — on-brand banners (using the proper tool for the job)
 
 **One template. One CSV. Every size, every variation — rendered automatically, perfectly on-brand.**
 
@@ -34,7 +34,7 @@ slow, it doesn't scale, and every manual step is a chance to drift off-brand.
                  │  generate_*.jsx    │   — the brand template is the source of truth
                  └───────────────────┘
                            ▼
-        10 sizes × N variations, pixel-perfect, on-brand
+        10 or so sizes × N variations, on-brand
         rendered as JPG + editable INDD — in seconds, unattended
 ```
 
@@ -45,6 +45,52 @@ slow, it doesn't scale, and every manual step is a chance to drift off-brand.
   image, output name. Add a row → get a full size-set for it.
 - **The script does the work.** It lays out every size for every row, places the
   right imagery, fits the copy, and exports — deterministically, every time.
+
+## Why InDesign, and not Photoshop?
+
+This same automation already exists in Photoshop, and Photoshop is superb at
+image compositing. But a banner is, at its core, a **typographic layout
+problem** — and that is exactly what InDesign is built to solve. Photoshop is a
+raster image editor; InDesign is a professional page-layout and publishing
+application. When copy has to fit, wrap, and stay on-brand across dozens of
+sizes, that distinction is decisive.
+
+**Superior text handling — the deciding factor**
+
+- **A publication-grade text engine.** InDesign's paragraph composer, hyphenation
+  and justification, optical kerning, baseline grids, and full OpenType control
+  produce typesetting quality that Photoshop's type tool is not designed to match.
+- **Overset detection.** An InDesign text frame *knows* when copy doesn't fit, so
+  the automation can catch an over-long headline and flag it instead of silently
+  shipping a broken layout. Photoshop has no equivalent notion of text that
+  "doesn't fit."
+- **Predictable copy-fitting.** Auto-sizing text frames and precise fitting rules
+  mean headlines scale into their allotted space consistently across every size.
+
+**A layout tool, purpose-built for this work**
+
+- **Native multi-size documents.** Ten banner sizes are simply ten pages — with
+  independent geometries — in a single document. That is InDesign's natural model;
+  Photoshop leans on artboards, which are a weaker fit for distinct page sizes.
+- **Centralized paragraph and character styles.** Brand typography is defined once
+  and applied everywhere; change a style and every instance updates in lockstep.
+- **Frame-based image fitting.** Placing artwork into defined frames (fill
+  proportionally, auto-fit) is a first-class layout operation — precisely the
+  banner use case.
+- **Vector-first and resolution-independent.** Text and vector artwork stay crisp
+  at any output size, rather than being baked into a fixed-resolution raster comp.
+
+**Built for data-driven production**
+
+- **Data Merge is a native InDesign capability.** "One template + one data source →
+  many variations" is a canonical InDesign workflow, not a bolt-on.
+- **Preflight for automated QA.** InDesign can validate a layout — missing fonts,
+  overset text, low-resolution links — giving the pipeline built-in quality checks.
+- **A truly editable deliverable.** The output `.indd` is a structured layout a
+  designer can reopen and refine, not a flattened image.
+
+> **In short:** Photoshop paints pixels; InDesign composes pages — and a banner is
+> a page.
 
 ## The vision: one click, right inside AEM
 
