@@ -101,11 +101,21 @@ var U = (function () {
     function trim(s) { return String(s).replace(/^\s+|\s+$/g, ""); }
 
     // Resolve the project root for BOTH local desktop and cloud (InDesign API):
+    //   0) InDesign API (cloud) — the service passes a "params" script argument
+    //      (JSON) whose workingFolder is the base dir where this job's assets[]
+    //      were downloaded. This wins on the cloud so relative paths resolve there.
     //   1) explicit override the orchestrator may set before running
     //   2) local desktop — the configured absolute path exists
     //   3) cloud/relocated — derive from this script's own location (…/scripts/<file>)
     //   4) last resort — current working directory
     function computeRoot() {
+        try {
+            var pj = app.scriptArgs.get("parameters"); // InDesign API arg name is "parameters"
+            if (pj) {
+                var m = pj.match(/"workingFolder"\s*:\s*"([^"]*)"/); // workingFolder is top-level
+                if (m && m[1]) return m[1].replace(/\\+/g, "/"); // normalize win backslashes
+            }
+        } catch (e) {}
         try { if ($.global.BRAND_PROJECT_ROOT) return String($.global.BRAND_PROJECT_ROOT); } catch (e) {}
         try { if (new Folder(CONFIG.projectRoot).exists) return CONFIG.projectRoot; } catch (e) {}
         try {

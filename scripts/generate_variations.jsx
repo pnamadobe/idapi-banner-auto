@@ -15,22 +15,36 @@
  * Run:  osascript -> do script (POSIX file ".../generate_variations.jsx") language javascript
  */
 
-#target indesign
-#include "brand_lib.jsx"
+// @include "brand_lib.jsx"
 
 (function () {
-    var log = [], warn = [], written = 0, inddWritten = 0;
-    var oldUnit = app.scriptPreferences.measurementUnit;
-    var oldUIL  = app.scriptPreferences.userInteractionLevel;
-    app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
-    app.scriptPreferences.measurementUnit = MeasurementUnits.PIXELS;
-
-    var doc = null;
+    var log = [], warn = [], written = 0, inddWritten = 0, outFiles = [];
+    // InDesign API return contract: the capability must return a JSON *string*;
+    // outputs are declared as workingFolder-relative paths in assetsToBeUploaded.
+    function jesc(s){ return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; }
+    function successPkg(files, dataUrl){
+        var a = [];
+        for (var i = 0; i < files.length; i++) a.push('{"path":' + jesc(files[i]) + '}');
+        var s = '{"status":"SUCCESS","assetsToBeUploaded":[' + a.join(",") + ']';
+        if (dataUrl) s += ',"dataURL":' + jesc(dataUrl);
+        return s + '}';
+    }
+    function failurePkg(msg){ return '{"status":"FAILURE","errorString":' + jesc(msg) + '}'; }
+    var doc = null, oldUnit, oldUIL;
     try {
+        oldUnit = app.scriptPreferences.measurementUnit;
+        app.scriptPreferences.measurementUnit = MeasurementUnits.PIXELS;
+        // userInteractionLevel isn't supported on the InDesign API server (already
+        // non-interactive there); guard it so desktop still suppresses dialogs.
+        try {
+            oldUIL = app.scriptPreferences.userInteractionLevel;
+            app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
+        } catch (e) {}
+
         var tpl = U.file(U.CONFIG.templateRel);
         try { if ($.global.BRAND_TEMPLATE) { var otpl = new File(String($.global.BRAND_TEMPLATE)); if (otpl.exists) tpl = otpl; } } catch (e) {}
-        if (!tpl.exists) return "ERROR: template not found: " + tpl.fsName;
-        doc = app.open(tpl, false); // open hidden-ish; we never save it
+        if (!tpl.exists) return failurePkg("template not found: " + tpl.fsName + " (root=" + U.root + ")");
+        doc = app.open(tpl); // server has no window arg; we never save the template
 
         var csvFile = U.file(U.CONFIG.csvRel);
         try { if ($.global.BRAND_CSV) { var ov = new File(String($.global.BRAND_CSV)); if (ov.exists) csvFile = ov; } } catch (e) {}
@@ -83,7 +97,7 @@
         var qmap = { LOW: JPEGOptionsQuality.LOW, MEDIUM: JPEGOptionsQuality.MEDIUM, HIGH: JPEGOptionsQuality.HIGH, MAXIMUM: JPEGOptionsQuality.MAXIMUM };
         app.jpegExportPreferences.jpegQuality = qmap[String(U.CONFIG.jpegQuality).toUpperCase()] || JPEGOptionsQuality.MAXIMUM;
 
-        var outDir = new Folder(U.CONFIG.projectRoot + "/" + U.CONFIG.outputRel);
+        var outDir = new Folder(U.root + "/" + U.CONFIG.outputRel);
         if (!outDir.exists) outDir.create();
 
         function styleFor(pageName, role) {
@@ -142,15 +156,16 @@
                 setText(pg, pageName, "city",   row[C.city]);
 
                 var base = outDir.fsName + "/" + pageName + "_" + stem;
+                var relBase = U.CONFIG.outputRel + "/" + pageName + "_" + stem;
                 if (wantPNG) {
                     app.pngExportPreferences.pageString = pg.name;
-                    doc.exportFile(ExportFormat.PNG_FORMAT, new File(base + ".png"), false);
-                    written++;
+                    doc.exportFile(ExportFormat.PNG_FORMAT, new File(base + ".png"));
+                    written++; outFiles.push(relBase + ".png");
                 }
                 if (wantJPG) {
                     app.jpegExportPreferences.pageString = pg.name;
-                    doc.exportFile(ExportFormat.JPG, new File(base + ".jpg"), false);
-                    written++;
+                    doc.exportFile(ExportFormat.JPG, new File(base + ".jpg"));
+                    written++; outFiles.push(relBase + ".jpg");
                 }
             }
             // optional editable source: one .indd per row, all 10 pages populated.
@@ -158,7 +173,7 @@
             // so the next row simply overwrites these pages and dumps another copy.
             if (writeIndd) {
                 doc.saveACopy(new File(outDir.fsName + "/" + stem + ".indd"));
-                inddWritten++;
+                inddWritten++; outFiles.push(U.CONFIG.outputRel + "/" + stem + ".indd");
             }
             log.push(stem);
         }
@@ -171,15 +186,22 @@
                  "\n\nrows: " + log.join(", ") +
                  "\n\nwarnings (" + warn.length + "):\n" + (warn.length ? warn.join("\n") : "none") + "\n");
         lf.close();
+        outFiles.push(U.CONFIG.outputRel + "/_run_log.txt");
 
-        return "OK root=" + U.root + " | rows=" + csv.rows.length + " format=" + fmt + " pagemap=" + pmName +
-               " images=" + written + " indd=" + inddWritten +
-               " | warnings=" + warn.length + (warn.length ? " :: " + warn.join(" ; ") : "");
+        // The InDesign API returns the contents of a "response data" JSON file
+        // (dataURL, relative to workingFolder) to the caller, and uploads every
+        // path in assetsToBeUploaded, handing back their URLs.
+        var resultRel = "result.json";
+        var rf = new File(U.root + "/" + resultRel);
+        rf.encoding = "UTF-8"; rf.open("w");
+        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + '}');
+        rf.close();
+        return successPkg(outFiles, resultRel);
     } catch (e) {
-        return "ERROR: " + e.message + " (line " + e.line + ")";
+        return failurePkg((e && e.message ? e.message : String(e)) + " (line " + (e && e.line) + ")");
     } finally {
-        if (doc) doc.close(SaveOptions.NO);
-        app.scriptPreferences.measurementUnit = oldUnit;
-        app.scriptPreferences.userInteractionLevel = oldUIL;
+        try { if (doc) doc.close(SaveOptions.NO); } catch (e) {}
+        try { if (oldUnit !== undefined) app.scriptPreferences.measurementUnit = oldUnit; } catch (e) {}
+        try { if (oldUIL !== undefined) app.scriptPreferences.userInteractionLevel = oldUIL; } catch (e) {}
     }
 })();

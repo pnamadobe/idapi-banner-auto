@@ -354,7 +354,7 @@ function buildManifest() {
     manifestVersion: "1.0.0",
     name: process.env.CAPABILITY_NAME || "idapi-banner-exporter",
     host: { app: "indesign", minVersion: "16.0.1", maxVersion: "99.9.9" },
-    version: "1.0.0",
+    version: process.env.CAPABILITY_VERSION || "1.0.0",
     apiEntryPoints: [
       { type: "capability", path: path.basename(CFG.files.scriptEntry), language: "extendscript" },
     ],
