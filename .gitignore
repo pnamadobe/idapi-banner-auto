@@ -16,6 +16,8 @@ HANDOFF.md
 scripts/_extracted_specs.json
 # Internal ops/status doc (org ids, colleague names, internal channels) — keep local.
 cloud/AEM-EXTENSION-DESIGN.md
+# Internal team replication guide (references Adobe-internal entitlement process).
+SETUP.md
 
 # Local-only debranded render helper (hardcoded personal paths)
 run_debrand.sh
