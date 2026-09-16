@@ -79,17 +79,32 @@ GET URLs for inputs.)
 
 ---
 
-## Part 4 — AEM environment + developer token
+## Part 4 — AEM environment + auth (Service Credential)
+
+You need the **author URL** and a **durable AEM credential** for the action.
 
 1. **Cloud Manager** → your Program → **Environments** → open the target env's
-   **Developer Console**.
-2. **Integrations** tab → service **author** → **Get Local Development Token** →
-   copy the `accessToken` (valid ~24h). For a durable/App-Builder credential use
-   **Service Credentials** instead (technical account).
-3. Note the **author URL**: `https://author-p<program>-e<env>.adobeaemcloud.com`.
+   **Developer Console**. Note the **author URL**
+   `https://author-p<program>-e<env>.adobeaemcloud.com`.
+2. **Integrations** tab — two options:
+   - **Quick test (ephemeral):** service **author** → **Get Local Development Token**
+     → `accessToken`. Valid ~24h **and dies when your IMS login session changes**
+     (aio login, incognito, etc.). Fine for a one-off CLI test, useless for the
+     deployed action.
+   - **Durable (use this for the extension):** **Service Credentials** → **Create
+     service credentials** (provisions a technical account; ~3 per env limit).
+     Downloads a JSON with a private key + `clientId`/`clientSecret`. The action
+     signs a JWT and exchanges it for a fresh AEM token **every run** — no manual
+     tokens, never expires.
+3. **⚠️ Grant the technical account DAM WRITE access.** By default it can *read* but
+   not *write*, so write-back fails with `403 initiateUpload`. In AEM author:
+   **Tools → Security → Users** → find the tech account (search its clientId, e.g.
+   `cm-p<prog>-e<env>-integration-0`) → add it to a group with `/content/dam` write
+   (`administrators` works) → Save.
 
-> The App Builder extension must be created in **the same IMS org that owns this
-> AEM environment**, or it won't appear in that AEM's Assets View.
+> The Service Credential is **per-env** — each env (dev/prod) needs its own + the
+> DAM-write grant. The App Builder extension must be in **the same IMS org that owns
+> the AEM env**, or it won't appear in that AEM's Assets View.
 
 ---
 
@@ -161,27 +176,59 @@ drop your brand's font files in `cloud/fonts/`.
 
 ---
 
-## Part 8 — App Builder extension
+## Part 8 — App Builder extension (the "Generate Banners" button)
 
+This has several non-obvious gates. In order:
+
+**1. Enable Assets View UI Extensibility for your IMS org (the hidden gate).**
+A published extension will **not** appear until this Adobe-side feature toggle is on
+for your IMS org. Request it in the internal **`#dx-ui-extensibility`** Slack channel
+with your IMS org id, AEM env(s), and extension point `aem/assets/assetsview/1`.
+(Assets Ultimate; internal/eval orgs can be enabled too.) There is **no `aio` way to
+check this** — if Extension Manager shows nothing for Assets View, it's not enabled.
+
+**2. Scaffold.**
 ```bash
-aio login                        # pick the enterprise profile for the right org
-aio app init aem-extension       # in the repo root
+aio login          # pick the org that owns your AEM env
+aio app init aem-extension
 ```
-- Select the org that owns your AEM env, the project, and a Stage/dev workspace.
-- Templates → **All Extension Points** → **`@adobe/aem-assets-assetsview-ext-tpl`**
-  (extension point `aem/assets/assetsview/1`).
+Templates → **All Extension Points** → **`@adobe/aem-assets-assetsview-ext-tpl`**
+(`aem/assets/assetsview/1`). Add an **ActionBar action** (with a **modal**) and a
+**server-side handler** (the Runtime action).
 
-The Runtime action + the "Generate Banners" button live under `aem-extension/`
-(the action ports `cloud/aem-render.mjs`; the FFS/Azure/AEM values become action
-inputs/secrets). Then:
+**3. Wire the action** (`ext.config.yaml` inputs, values from `.env`): the FFS OAuth
+S2S creds, `INDESIGN_EXECUTE_URL`, the presigned-storage config (`AZURE_BLOB_BASE`),
+`AEM_AUTHOR_URL`, and the base64 Service Credential (`AEM_SC_JSON`). Set
+**`require-adobe-auth: false`** — with it `true`, aio deploys only `__secured_*`
+without the public route in some namespaces, so the action URL **404s**. Raise the
+action `limits.timeout` (renders take minutes).
 
+**4. Deploy + publish.**
 ```bash
-cd aem-extension
-aio app deploy
+aio app use -w Production && aio app deploy   # merge (m) .env/.aio when asked
 ```
-Finally, enable the extension in your AEM env's Assets View (Assets View → the
-extensions/config entry for your App Builder app), and the **Generate Banners**
-button appears on the folder action bar.
+Then **publish/approve in Adobe Exchange** (NOT Developer Console):
+**`exchange.adobe.com/manage`** → **App Builder applications** → your app →
+**Approve** (needs org **System Admin**). If the org/app doesn't show, **sign out of
+Exchange + reopen in incognito + pick the right org**. Approval flips it from
+"In review / DRAFT" to **Published**.
+
+**5. Enable the extension per-environment** in **Extension Manager** (EM SPA).
+
+The **Generate Banners** button then appears in that env's Assets View when an
+`.indd` is selected.
+
+### Faster dev loop (skip the publish cycle)
+Republishing on every change is painful. Deploy to **Stage** (no approval) and inject
+the build via a preview URL:
+```
+https://experience.adobe.com/?devMode=true&ext=<STAGE …adobeio-static.net/index.html>?v=N&repoId=<author host>#<assets-view hash>
+```
+- `adobeio-static.net` **caches `index.html`** → **bump `?v=N`** every deploy to bust it.
+- The modal **fires the render and returns immediately** ("Generation started"); the
+  render runs for minutes server-side and lands in AEM. Web actions can't hold a
+  synchronous HTTP response that long (you'd get "Response not yet ready"), so this
+  fire-and-forget UX is by design.
 
 ---
 
@@ -195,7 +242,13 @@ button appears on the folder action bar.
 | Job fails **"Script didn't return anything"** | Capability-script contract — no `#target`, return a JSON package with `assetsToBeUploaded` + `dataURL`, avoid desktop-only API calls. |
 | AEM write-back **"fetch failed …comundefined"** | Direct-binary upload: bare block `PUT` (no `x-ms-blob-type`); build the complete URL as `<folder>.completeUpload.json` yourself. |
 | `aio app init` **"No organizations found"** | `aio logout --force` then `aio login --force`; sign out of Adobe in the browser first and pick the **enterprise** profile. |
-| Extension not visible in Assets View | App Builder project must be in the **same org** as the AEM env; deploy + enable the extension for that env. |
+| Extension not visible in Assets View | (1) org-level UI Extensibility toggle not enabled — request in `#dx-ui-extensibility`; (2) not **Published** — approve in Exchange Manage; (3) not enabled per-env in **Extension Manager**; (4) wrong org. |
+| Action URL **404 "resource does not exist"** | `require-adobe-auth: true` deployed only `__secured_*` — set it `false` and validate in-action. |
+| Modal: **`getAccessToken()` times out** | Auth API is unreliable from the modal's `attach()` connection — authenticate in the action via a **Service Credential**, not the browser token. |
+| AEM **401 "access token invalid/expired"** | A local dev token died with a session change — use a **Service Credential** (Part 4). |
+| AEM **403 `initiateUpload`** on write-back | Tech account lacks DAM write — add it to a DAM-write group (Part 4, step 3). |
+| Stale bundle / empty modal after deploy | `adobeio-static` caches `index.html` — bump the `?v=` cache-buster on the preview URL. |
+| **"Response not yet ready"** | Render exceeded the ~60s sync HTTP window — expected; the action finishes async and writes to AEM (fire-and-forget UX). |
 
 ---
 

@@ -149,14 +149,14 @@ flowchart LR
 | **`scripts/brand_lib.jsx`** | Shared library: size definitions, fonts, defaults, and the working-dir resolver the cloud job relies on. |
 | **`scripts/build_template.jsx`** | Generates the master template from spec, so the design itself is reproducible. |
 | **`cloud/run.mjs`** | The harness. Authenticates to Adobe IMS, registers the script as an InDesign *capability*, uploads inputs, runs the job, polls, and retrieves outputs. |
-| **AEM Assets View extension** *(designed)* | The one-click UI: an Action Bar button that hands the selected folder to an App Builder Runtime action, which calls the InDesign API and writes results back to AEM. |
+| **AEM Assets View extension** | The one-click UI: an Action Bar button that hands the selected folder to an App Builder Runtime action, which calls the InDesign API and writes results back to AEM. |
 
 ### Pipeline phases
 
 ```
 Phase 1  Rendering engine       ✅  proven — one template + CSVs → the full size-set
-Phase 2  Cloud rendering        🟡  harness ready (auth, --register, --submit); gated on API entitlement
-Phase 3  AEM one-click          ⚪  designed — Runtime action + Assets View extension
+Phase 2  Cloud rendering        ✅  headless render on the Adobe InDesign API
+Phase 3  AEM one-click          ✅  "Generate Banners" in Assets View → render → write back
 ```
 
 ---
@@ -217,18 +217,19 @@ table for the common gotchas.
 
 ## Status & roadmap
 
-This is an active build. The rendering pipeline is proven, and the cloud harness
-is complete — IMS auth, capability registration, and job orchestration, verified
-against the live InDesign API. The first end-to-end cloud render is gated on
-Firefly Services entitlement; the one-click AEM experience is designed and next
-in line.
+The full pipeline works end to end. The rendering engine, the cloud harness (IMS
+auth, capability registration, job orchestration), a headless render on the live
+InDesign API, and the one-click AEM experience are all in place: a **"Generate
+Banners"** action in AEM Assets View hands the selected folder to an App Builder
+Runtime action, which renders on the InDesign API and writes the results back into
+the folder's `output/`.
 
 - [x] Reproducible template generation
 - [x] Full size-set rendering (one template → every placement)
 - [x] Cloud harness: IMS auth, capability registration, job orchestration
-- [ ] First headless cloud render (pending InDesign API / Firefly Services entitlement)
-- [ ] App Builder Runtime action + storage wiring
-- [ ] AEM Assets View "Generate Banners" extension
+- [x] Headless cloud render on the Adobe InDesign API
+- [x] App Builder Runtime action + presigned storage + AEM read/write-back
+- [x] AEM Assets View "Generate Banners" extension
 
 ## Built with
 
