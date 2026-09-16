@@ -208,6 +208,13 @@ the results.
 
 ---
 
+## Set up your own environment
+
+Standing this up in your own org — InDesign API entitlement → OAuth credential →
+presigned storage → AEM → the Assets View extension — is documented step by step in
+**[SETUP.md](SETUP.md)**, with a filled-in `.env` template and a troubleshooting
+table for the common gotchas.
+
 ## Status & roadmap
 
 This is an active build. The rendering pipeline is proven, and the cloud harness
