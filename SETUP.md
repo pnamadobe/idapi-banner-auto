@@ -142,7 +142,40 @@ AEM_DEV_TOKEN=<local development token>
 node cloud/run.mjs --check-auth     # should mint a bearer token
 node cloud/run.mjs --register       # 201; prints an execution URL
 ```
-Copy the execution URL into `cloud/.env` as `INDESIGN_EXECUTE_URL=…`.
+The register command returns a new execution URL. Copy that URL into **both**
+`cloud/.env` and `aem-extension/.env` as `INDESIGN_EXECUTE_URL=…`. The CLI
+harness and the AEM extension are separate callers; updating only one leaves the
+other pointed at the previous capability.
+
+For a script change, use a new capability version before registering:
+
+```bash
+# Example: 1.0.10 already exists, so use 1.0.11 (or the next unused version).
+CAPABILITY_VERSION=1.0.11 node cloud/run.mjs --register
+```
+
+If you set the version in `cloud/.env`, simply run:
+
+```bash
+node cloud/run.mjs --register
+```
+
+After updating `aem-extension/.env`, deploy the extension actions to the same
+workspace where AEM is enabled. For Production, explicitly select Production
+and verify that `.aio` shows the non-`-stage` hosts before deploying:
+
+```bash
+cd aem-extension
+aio app use -w Production --no-input
+jq -r '.project.workspace | [.name,.app_url,.action_url] | @tsv' .aio
+# Expected: Production and URLs without "-stage"
+aio app deploy
+```
+
+Use `aio app use -w Stage --no-input` and URLs containing `-stage` only for
+Stage testing. A published Production app may reject updates until its current
+listing is revoked/retracted according to the Exchange workflow.
+
 (Re-registering later needs a NEW `CAPABILITY_VERSION`, else 422 "already exists.")
 
 > **The script is baked into the capability.** `generate_variations.jsx` /
