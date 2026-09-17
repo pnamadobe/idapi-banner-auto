@@ -10,7 +10,7 @@
       "needsModal": true,
       "modalTitle": "Banners from InDesign template",
       "modalType": "modal",
-      "modalSize": "M",
+      "modalSize": "L",
       "id": "indesign-banners-generation",
       "componentName": "ModalIndesignBannersGeneration"
     }

@@ -224,12 +224,21 @@ Templates → **All Extension Points** → **`@adobe/aem-assets-assetsview-ext-t
 (`aem/assets/assetsview/1`). Add an **ActionBar action** (with a **modal**) and a
 **server-side handler** (the Runtime action).
 
-**3. Wire the action** (`ext.config.yaml` inputs, values from `.env`): the FFS OAuth
-S2S creds and `INDESIGN_EXECUTE_URL`,
-`AEM_AUTHOR_URL`, and the base64 Service Credential (`AEM_SC_JSON`). Set
+**3. Wire the action** (`ext.config.yaml` inputs, values from
+`aem-extension/.env`): use `aem-extension/.env.example` as the template and
+provide the FFS OAuth S2S creds and `INDESIGN_EXECUTE_URL` from your own
+Developer Console project, plus your own AEM author URL
+(`AEM_AUTHOR_URL`) and base64 Service Credential (`AEM_SC_JSON`). Set
 **`require-adobe-auth: false`** — with it `true`, aio deploys only `__secured_*`
 without the public route in some namespaces, so the action URL **404s**. Raise the
 action `limits.timeout` (renders take minutes).
+
+At runtime the extension first looks for the current author URL in the Assets
+View host/resource metadata and passes it to the action. This avoids relying on
+environment IDs such as `p59602` or `e520244` when Assets View exposes the
+metadata. Keep `AEM_AUTHOR_URL` configured as a fallback because some hosts do
+not provide it, and ensure the Service Credential has access to every target
+environment the deployment may use.
 
 **4. Deploy + publish.**
 ```bash

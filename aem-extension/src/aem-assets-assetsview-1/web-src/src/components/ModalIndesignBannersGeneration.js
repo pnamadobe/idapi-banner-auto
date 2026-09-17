@@ -18,14 +18,14 @@ function readJob() {
   try {
     const j = JSON.parse(localStorage.getItem('idapi_job') || '{}');
     if (j && (j.folder || j.assetPath !== undefined || j.token)) {
-      return { folder: j.folder || '', template: j.templateName || '', assetPath: j.assetPath || '', token: j.token || '' };
+      return { folder: j.folder || '', template: j.templateName || '', assetPath: j.assetPath || '', token: j.token || '', aemAuthorUrl: j.aemAuthorUrl || '' };
     }
   } catch (e) { /* ignore */ }
   // fallback: hash query
   const h = window.location.hash || '';
   const q = h.includes('?') ? h.slice(h.indexOf('?') + 1) : '';
   const sp = new URLSearchParams(q);
-  return { folder: sp.get('folder') || '', template: sp.get('template') || '' };
+  return { folder: sp.get('folder') || '', template: sp.get('template') || '', aemAuthorUrl: sp.get('aemAuthorUrl') || '' };
 }
 function resolveActionUrl() {
   // config.json is populated at build/deploy with { "<pkg>/<action>": "https://…" }
@@ -37,7 +37,7 @@ export default function ModalIndesignBannersGeneration() {
   const [guestConnection, setGuestConnection] = useState();
   const [colorScheme, setColorScheme] = useState('light');
   const [job] = useState(readJob);
-  const { folder, template } = job;
+  const { folder, template, aemAuthorUrl } = job;
   const [status, setStatus] = useState('idle'); // idle | running | done | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -61,7 +61,7 @@ export default function ModalIndesignBannersGeneration() {
     // a spinner: race a short window to surface fast failures (auth/missing inputs);
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
-    const call = actionWebInvoke(url, {}, { folder, writeIndd: writeIndd ? '1' : '' })
+    const call = actionWebInvoke(url, {}, { folder, aemAuthorUrl, writeIndd: writeIndd ? '1' : '' })
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
     const outcome = await Promise.race([

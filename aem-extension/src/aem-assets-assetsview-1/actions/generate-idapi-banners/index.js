@@ -178,7 +178,13 @@ async function main (params) {
     if (params.AEM_SC_JSON) aemToken = await aemTokenFromServiceCredential(params.AEM_SC_JSON)
     else aemToken = params.AEM_DEV_TOKEN || getBearerToken(params)
     if (!aemToken) return errorResponse(401, 'no AEM token', logger)
-    const author = params.AEM_AUTHOR_URL
+    const discoveredAuthor = String(params.aemAuthorUrl || '').replace(/\/+$/, '')
+    if (discoveredAuthor && !/^https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com$/i.test(discoveredAuthor)) {
+      return errorResponse(400, 'aemAuthorUrl must be an AEM Cloud author URL', logger)
+    }
+    const author = discoveredAuthor || String(params.AEM_AUTHOR_URL || '').replace(/\/+$/, '')
+    if (!author) return errorResponse(500, 'AEM_AUTHOR_URL is not configured for this deployment', logger)
+    if (!/^https:\/\//i.test(author)) return errorResponse(500, 'AEM_AUTHOR_URL must be an https URL', logger)
     const folder = params.folder                        // /content/dam/<...>
     const maxRows = params.maxRows ? Number(params.maxRows) : 0
 

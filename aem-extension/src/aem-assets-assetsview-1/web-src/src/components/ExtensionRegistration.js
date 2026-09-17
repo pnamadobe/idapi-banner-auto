@@ -7,6 +7,25 @@ import { Text } from '@adobe/react-spectrum';
 import { register } from '@adobe/uix-guest';
 import { extensionId } from './Constants';
 
+function findAemAuthorUrl(...sources) {
+  const seen = new Set();
+  const visit = (value, depth = 0) => {
+    if (depth > 5 || value == null) return '';
+    if (typeof value === 'string') {
+      const match = value.match(/https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com/i);
+      return match ? match[0].replace(/\/+$/, '') : '';
+    }
+    if (typeof value !== 'object' || seen.has(value)) return '';
+    seen.add(value);
+    for (const item of Array.isArray(value) ? value : Object.values(value)) {
+      const result = visit(item, depth + 1);
+      if (result) return result;
+    }
+    return '';
+  };
+  return sources.map(visit).find(Boolean) || '';
+}
+
 function ExtensionRegistration() {
   const init = async () => {
     const guestConnection = await register({
@@ -40,12 +59,16 @@ function ExtensionRegistration() {
                   if (dam > 0) assetPath = assetPath.slice(dam);
                   const folder = assetPath.includes('/') ? assetPath.slice(0, assetPath.lastIndexOf('/')) : '';
                   const templateName = assetPath.split('/').pop() || '';
+                  // Assets View may include the current AEM author URL in the
+                  // resource metadata or host context. Pass it through when
+                  // available so one deployment can serve multiple envs.
+                  const aemAuthorUrl = findAemAuthorUrl(context, resourceSelection);
                   // The Runtime action authenticates to AEM itself, so we just hand
                   // it the job folder (via localStorage — shared across the
                   // extension's same-origin iframes).
-                  const job = { folder, templateName, assetPath };
+                  const job = { folder, templateName, assetPath, aemAuthorUrl };
                   try { localStorage.setItem('idapi_job', JSON.stringify(job)); } catch (e) {}
-                  const qs = `folder=${encodeURIComponent(folder)}&template=${encodeURIComponent(templateName)}`;
+                  const qs = `folder=${encodeURIComponent(folder)}&template=${encodeURIComponent(templateName)}&aemAuthorUrl=${encodeURIComponent(aemAuthorUrl)}`;
                   guestConnection.host.modal.openDialog({
                     title: 'Banners from InDesign template',
                     // cache-bust index.html at runtime so the modal iframe always
