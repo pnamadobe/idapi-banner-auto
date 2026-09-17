@@ -161,7 +161,7 @@ In AEM Assets, create a folder (this is the "key") containing:
 | Item | Rule |
 |------|------|
 | InDesign template | filename contains **`template`**, ends `.indd` |
-| Variations CSV | a `.csv` (columns: `outputFileName,hero,city,header`) |
+| Variations CSV | a `.csv` with a reserved `outputFileName` column plus content columns |
 | Pagemap CSV | filename contains **`pagemap`** (`pagenumber,pagename`) |
 | Hero images | the `.jpg/.png` referenced by the variations CSV |
 | `fonts/` *(optional)* | per-job font files (`.otf/.ttf/.ttc/.woff2`) — override the shared set for this job |
@@ -183,16 +183,17 @@ The `.indd` must contain one InDesign **page** for each output artboard/placemen
 The automation does not infer content from layer names or from the visible page
 name. Add Script Labels to the actual swappable page items:
 
-| Page item | Required Script Label | Filled from |
+| Page item | Script Label | Filled from |
 |---|---|---|
-| Hero image graphic frame | `hero` | the `hero` column in `variations.csv` |
-| Headline text frame | `header` | the `header` column in `variations.csv` |
-| City/location text frame | `city` | the `city` column in `variations.csv` |
+| Image graphic frame | Any label you choose | the CSV column with the same header |
+| Text frame | Any label you choose | the CSV column with the same header |
 
 In InDesign, select each frame and open **Window > Utilities > Script Label**;
-enter the label exactly, including lowercase spelling. The label must be on the
-image or text frame itself, not only on a group, layer, or paragraph style.
-Additional static design elements can remain unlabeled.
+enter the label exactly as it appears in the CSV header, including spaces and
+capitalization. The label must be on the image or text frame itself, not only on
+a group, layer, or paragraph style. Additional static design elements can remain
+unlabeled. `outputFileName` is reserved for output naming and does not need a
+frame.
 
 The pagemap CSV is the authoritative page-to-artboard mapping:
 

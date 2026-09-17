@@ -1,9 +1,10 @@
 /*
  * generate_variations.jsx — the exporter. Opens the template, then for every
- * CSV row swaps the hero image + header/city/legal text and exports one PNG per
- * (size x row), named  <ARTBOARD>_<outputFileName>.png.
+ * CSV row swaps labeled image/text frames and exports one PNG per (size x row),
+ * named <ARTBOARD>_<outputFileName>.png. Every CSV header except the reserved
+ * outputFileName column is also the Script Label of the frame it populates.
  *
- * Frames are located by Script Label (hero/header/city/legal) — the direct
+ * Frames are located by Script Label matching the CSV headers — the direct
  * analog of your PSD layer names. The template file is never modified on disk.
  *
  * Advanced-text handling on show here:
@@ -142,12 +143,12 @@
             if (tf.overflows) warn.push(pageName + " '" + role + "' OVERSET (text too long)");
         }
 
-        function setHero(pg, pageName, heroName) {
-            if (!heroName) return;
-            var f = U.shot(heroName);
-            if (!f.exists) { warn.push(pageName + ": hero missing '" + heroName + "'"); return; }
-            var frame = U.findByLabel(pg, "hero");
-            if (!frame) { warn.push(pageName + ": no 'hero' frame"); return; }
+        function setImage(pg, pageName, role, imageName) {
+            if (!imageName) return;
+            var f = U.shot(imageName);
+            if (!f.exists) { warn.push(pageName + ": " + role + " image missing '" + imageName + "'"); return; }
+            var frame = U.findByLabel(pg, role);
+            if (!frame) { warn.push(pageName + ": no '" + role + "' frame"); return; }
             if (frame.graphics.length > 0) {
                 // relink() alone repoints the link AND redraws the new pixels;
                 // the extra update() is redundant and forces a full asset reload
@@ -158,6 +159,20 @@
             }
             frame.fit(FitOptions.FILL_PROPORTIONALLY);
             frame.fit(FitOptions.CENTER_CONTENT);
+        }
+
+        function setField(pg, pageName, role, value) {
+            if (value === undefined || value === null || value === "") return;
+            var frame = U.findByLabel(pg, role);
+            if (!frame) { warn.push(pageName + ": no '" + role + "' frame"); return; }
+            if (frame.graphics && frame.graphics.length >= 0) {
+                var image = U.shot(value);
+                if (image.exists) {
+                    setImage(pg, pageName, role, value);
+                    return;
+                }
+            }
+            setText(pg, pageName, role, value);
         }
 
         // Page name = the page-map entry for this page number (1-based), else a
@@ -178,9 +193,11 @@
                 var pg = doc.pages.item(i);
                 var pageName = pageNameOf(pg, i);
 
-                setHero(pg, pageName, row[C.hero]);
-                setText(pg, pageName, "header", row[C.header]);
-                setText(pg, pageName, "city",   row[C.city]);
+                for (var ci = 0; ci < csv.header.length; ci++) {
+                    var field = U.trim(csv.header[ci]);
+                    if (!field || field === C.file) continue;
+                    setField(pg, pageName, field, row[field]);
+                }
 
                 var base = outDir.fsName + "/" + pageName + "_" + stem;
                 var relBase = U.CONFIG.outputRel + "/" + pageName + "_" + stem;

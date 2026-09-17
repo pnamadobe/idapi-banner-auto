@@ -43,15 +43,16 @@ used by the registered InDesign capability.
 ### Template and pagemap contract
 
 The InDesign template must have one page per output artboard. Put Script Labels
-on the actual swappable page items (not only on a group or layer):
+on the actual swappable page items (not only on a group or layer). Label names
+are intentionally flexible:
 
-- image frame: `hero`
-- headline text frame: `header`
-- city/location text frame: `city`
+- image frame: any label matching an image column header
+- text frame: any label matching a text column header
 
-Use **Window > Utilities > Script Label** in InDesign and match the lowercase
-labels exactly. The `hero`, `header`, and `city` values in each variations CSV
-row are applied to those corresponding labeled frames.
+Use **Window > Utilities > Script Label** in InDesign and match the CSV header
+exactly, including spaces and capitalization. Every variations CSV column except
+the reserved `outputFileName` column is applied to the frame with the matching
+label. `outputFileName` controls output naming and does not need a frame.
 
 The pagemap CSV maps 1-based InDesign page order to output artboard names:
 

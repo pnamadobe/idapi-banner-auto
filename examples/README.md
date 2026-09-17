@@ -28,8 +28,8 @@ You supply one more thing the repo doesn't ship: **your own `.indd` template**
 ```
   template.indd            variations.csv            pagemap.csv
   (1 page per size,        (1 row per variation:     (page number → placement
-   frames labeled          hero, city, header)        name, e.g. 3 → SOCIAL_FEED)
-   header / city / hero)
+   frames labeled to       outputFileName +          name, e.g. 3 → SOCIAL_FEED)
+   match the CSV headers)   your content columns)
         │                        │                         │
         └────────────────────────┴─────────────┬───────────┘
                                                 ▼
@@ -50,23 +50,25 @@ Create one InDesign document with **one page per placement size**. On each page:
 
 1. **Size the page** to the placement's exact pixel dimensions (e.g. a page that
    is `1000 × 320` px for a leaderboard). Different pages can be different sizes.
-2. **Add a hero image frame** and give the frame itself the **script label** `hero`
-   (select the frame → *Window ▸ Utilities ▸ Script Label* → type `hero`). The
-   exporter places each row's image here and fits it *fill-proportionally, centered*.
-3. **Add text frames** for your copy and label the frames themselves `header` and
-   `city` the same way. The exporter flows each row's text into the matching label.
+2. Add an image frame and give the frame itself a Script Label that exactly
+   matches the corresponding image column header in the variations CSV (for
+   example, `Hero Image` or `background_asset`). The exporter places each row's
+   image there and fits it *fill-proportionally, centered*.
+3. Add text frames and give each frame a Script Label that exactly matches its
+   corresponding CSV column header (for example, `Headline` or `Location`). The
+   exporter flows each row's text into the matching label.
 4. **Put your brand in the template** — logo, colors, fonts, grid. This is what
    guarantees every output is on-brand; the script never adds branding.
 5. *(Optional, for precise typography)* create a **paragraph style group named
    exactly like the placement** (e.g. `SOCIAL_FEED_1080x1080`) containing
-   paragraph styles named `header` and `city`. When present, the exporter applies
-   them, so each size can have its own type treatment.
+   paragraph styles named to match the corresponding CSV headers. When present,
+   the exporter applies them, so each size can have its own type treatment.
 
-> **Tip:** the labels (`hero`, `header`, `city`) are the contract. They must be
-> Script Labels on the actual image/text frames, not merely on a containing group,
-> layer, or paragraph style. Any frame with those labels gets filled; anything
-> else on the page is left untouched. Add logos, legal lines, backgrounds, etc.
-> freely.
+> **Tip:** the CSV headers and Script Labels are the contract. They can use any
+> names that make sense for your template, but each must match exactly. Labels
+> must be on the actual image/text frames, not merely on a containing group,
+> layer, or paragraph style. `outputFileName` is reserved for output naming.
+> Add logos, legal lines, backgrounds, etc. freely.
 
 This repo can also **generate** a template from a spec — see
 [`scripts/build_template.jsx`](../scripts/build_template.jsx), which builds all
@@ -80,14 +82,14 @@ One row per variation. Columns:
 | Column | Meaning |
 |--------|---------|
 | `outputFileName` | The stem for this variation's files, e.g. `SANT-EN-01` |
-| `hero` | Image filename to place (looked up in `assets/shots/`, then `assets/shots/square/`) |
-| `city` | Text for the frame labeled `city` |
-| `header` | Text for the frame labeled `header` — use `\n` for line breaks |
+| `outputFileName` | Reserved stem for the output files, e.g. `SANT-EN-01` |
+| Any image column | Image filename placed in the frame with the matching Script Label |
+| Any text column | Text for the frame with the matching Script Label; use `\n` for line breaks |
 
 From [`sample-variations.csv`](sample-variations.csv):
 
 ```csv
-outputFileName,hero,city,header
+outputFileName,Hero Image,Location,Headline
 FAIR-EN-01,aurora-borealis-sq.jpg,"Fairbanks, Alaska",SAY YES\nTO ANYWHERE.
 HONO-ES-01,koolau-mountains-hawaii-sq.jpg,"Honolulú, Hawái",DI QUE SÍ\nA DONDE SEA.
 ZERM-EN-02,matterhorn-switzerland-sq.jpg,"Zermatt, Switzerland",PACK LIGHT.\nDREAM BIG.\nGO FAR.
@@ -96,8 +98,8 @@ ZERM-EN-02,matterhorn-switzerland-sq.jpg,"Zermatt, Switzerland",PACK LIGHT.\nDRE
 Notes:
 - **Line breaks:** `\n` becomes a forced line break in the headline.
 - **Commas:** wrap a field in `"…"` if it contains a comma (like `city`).
-- **Localization & versions** are just more rows — swap the `header`/`city` text
-  and reuse the same heroes, as the EN/ES/`-02` rows above show.
+- **Localization & versions** are just more rows — swap the text values and reuse
+  the same images, as the EN/ES/`-02` rows above show.
 - A column you omit keeps the template's default for that frame.
 
 ## Step 3 — Write the pagemap CSV
@@ -124,8 +126,8 @@ the exporter uses the CSV mapping rather than the page's displayed InDesign name
 
 ## Step 4 — Add your imagery
 
-Drop the hero images referenced by the CSV into `assets/shots/` (or
-`assets/shots/square/`). Filenames must match the `hero` column.
+Drop the image files referenced by the CSV into `assets/shots/` (or
+`assets/shots/square/`). Filenames must match the image column you chose.
 
 ## Step 5 — Render
 
