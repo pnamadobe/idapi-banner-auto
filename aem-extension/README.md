@@ -6,8 +6,7 @@ Welcome to my Adobe I/O Application!
 
 - Copy `.env.example` to `.env` and fill it with credentials for your own
   App Builder workspace, Firefly Services project, and AEM environment. The
-  extension does not use a shared AEM environment; `AEM_AUTHOR_URL` must point
-  to the author URL for the environment where the extension is enabled.
+  extension does not use a shared AEM environment.
 - Keep `.env` local. It is ignored by Git.
 
 ## Local Dev
@@ -45,16 +44,16 @@ configuration.
 # AIO_RUNTIME_NAMESPACE=
 ```
 
-The Runtime action reads `AEM_AUTHOR_URL`, `AEM_SC_JSON` (preferred durable
-Service Credential), and the Firefly values at deploy time. Replace every
+The Runtime action reads `AEM_SC_JSON` (preferred durable Service Credential)
+and the Firefly values at deploy time. Replace every
 environment-specific value with one from your own org; do not copy another
 team member's `.env`.
 
 When Assets View supplies the current author URL in its resource or host
 metadata, the extension passes that URL with the job and uses it for the
-request. `AEM_AUTHOR_URL` remains the fallback for hosts that do not expose
-that metadata (and for local tests), so one deployment can work across
-environments when the host provides the URL.
+request. `AEM_AUTHOR_URL` is optional and remains available as a fallback for
+hosts that do not expose that metadata (and for local tests), so one deployment
+can work across environments without embedding an environment ID.
 
 ### `app.config.yaml`
 
