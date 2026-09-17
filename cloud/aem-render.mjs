@@ -4,7 +4,7 @@
  * future App Builder Runtime action). Folder-as-key:
  *
  *   1. read an AEM DAM folder, classify its assets
- *   2. stage inputs → presigned storage (Azure) the InDesign API can fetch
+ *   2. stage inputs → Adobe I/O Files presigned URLs the InDesign API can fetch
  *   3. execute the registered capability → headless render
  *   4. write outputs back into the folder's output/ subfolder (unpublished)
  *
@@ -12,12 +12,18 @@
  *   node cloud/aem-render.mjs --folder <damPath> --read   # list + classify (+ download to tmp)
  *   node cloud/aem-render.mjs --folder <damPath> --run    # full pipeline (added next)
  *
- * Zero npm deps. Node >= 18. Reads cloud/.env (AEM_AUTHOR_URL, AEM_DEV_TOKEN,
- * FFS_*, AZURE_*, INDESIGN_*).
+ * Node >= 18. Reads cloud/.env (AEM_AUTHOR_URL, AEM_DEV_TOKEN, FFS_*,
+ * INDESIGN_*). Input staging uses Adobe I/O Files, provisioned with the
+ * App Builder Runtime namespace.
  */
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { init: initFiles } = require("@adobe/aio-lib-files");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -93,7 +99,7 @@ function destFor(kind, name) {
 }
 
 // ---------------------------------------------------------------------------
-// IMS + Azure + InDesign API + AEM write-back helpers
+// IMS + Adobe I/O Files + InDesign API + AEM write-back helpers
 // ---------------------------------------------------------------------------
 async function imsToken() {
   const b = new URLSearchParams({ grant_type: "client_credentials", client_id: process.env.FFS_CLIENT_ID, client_secret: process.env.FFS_CLIENT_SECRET, scope: process.env.FFS_SCOPES || "openid,AdobeID,firefly_api,ff_apis,indesign_services" });
@@ -102,12 +108,23 @@ async function imsToken() {
   return (await r.json()).access_token;
 }
 
-const [AZ_BASE, AZ_SAS] = (process.env.AZURE_BLOB_BASE || "").split("?");
-const blobUrl = (dest) => `${AZ_BASE}/${dest.split("/").map(encodeURIComponent).join("/")}?${AZ_SAS}`;
-async function azPut(dest, buf) {
-  const r = await fetch(blobUrl(dest), { method: "PUT", headers: { "x-ms-blob-type": "BlockBlob", "Content-Length": String(buf.length) }, body: buf });
-  if (!(r.status === 201 || r.ok)) die(`Azure PUT ${dest} ${r.status} ${await r.text()}`);
-  return blobUrl(dest);
+async function stageInputs(staged) {
+  let files;
+  try {
+    files = await initFiles();
+  } catch (e) {
+    die(`Adobe I/O Files initialization failed (run this as an App Builder Runtime action with __OW_NAMESPACE/__OW_API_KEY): ${e.message}`);
+  }
+
+  const runPrefix = `aem-render/${Date.now()}-${randomUUID()}`;
+  const assets = [];
+  for (const s of staged) {
+    const storagePath = `${runPrefix}/${s.dest}`;
+    await files.write(storagePath, s.buf);
+    const url = await files.generatePresignURL(storagePath, { expiryInSeconds: 3600 });
+    assets.push({ source: { url }, destination: s.dest });
+  }
+  return { assets, files, runPrefix };
 }
 
 const idH = (tok) => ({ Authorization: `Bearer ${tok}`, "x-api-key": process.env.FFS_CLIENT_ID, "x-gw-ims-org-id": process.env.FFS_ORG_ID });
@@ -215,7 +232,9 @@ async function main() {
   }
 
   // ---- MODE === run : full pipeline ----
-  const maxRows = Number(getArg("--max-rows") || 0);
+  const maxRowsArg = getArg("--max-rows");
+  const maxRows = maxRowsArg === undefined ? 0 : Number(maxRowsArg);
+  if (!Number.isInteger(maxRows) || maxRows < 0) die("--max-rows must be a non-negative integer");
   log(`\nauthenticating (InDesign API)…`);
   const tok = await imsToken();
 
@@ -224,7 +243,12 @@ async function main() {
   const staged = [];
   staged.push({ dest: destFor("template"), buf: await aemDownload(FOLDER + "/" + c.template.name) });
   let varText = (await aemDownload(FOLDER + "/" + c.variations.name)).toString("utf8");
-  if (maxRows > 0) { varText = truncateCsv(varText, maxRows); log(`  (variations truncated to ${maxRows} row(s) for this run)`); }
+  if (maxRows > 0) {
+    varText = truncateCsv(varText, maxRows);
+    log(`  (variations truncated to ${maxRows} row(s) for this run)`);
+  } else {
+    log(`  (variations using full CSV: ${c.variations.name})`);
+  }
   staged.push({ dest: destFor("variations"), buf: Buffer.from(varText, "utf8") });
   staged.push({ dest: destFor("pagemap"), buf: await aemDownload(FOLDER + "/" + c.pagemap.name) });
   for (const im of c.images) staged.push({ dest: destFor("image", im.name), buf: await aemDownload(FOLDER + "/" + im.name) });
@@ -235,10 +259,10 @@ async function main() {
     staged.push({ dest: "template/Document Fonts/" + fn, buf: fs.readFileSync(path.join(fontsDir, fn)) });
   }
 
-  // 2. stage to Azure → presigned source URLs
-  log(`staging ${staged.length} inputs to Azure…`);
-  const assets = [];
-  for (const s of staged) assets.push({ source: { url: await azPut(s.dest, s.buf) }, destination: s.dest });
+  // 2. stage to Adobe I/O Files → external presigned source URLs
+  log(`staging ${staged.length} inputs to Adobe I/O Files…`);
+  const stagedFiles = await stageInputs(staged);
+  const { assets } = stagedFiles;
 
   // 3. execute + poll
   log(`executing capability on the InDesign API…`);
@@ -259,6 +283,8 @@ async function main() {
     if (up % 10 === 0 || up <= 3) log(`  ↑ ${name}`);
   }
   log(`\n✓ done — ${up} outputs written to AEM ${outFolder} (unpublished, ready for your review).`);
+  await stagedFiles.files.delete(stagedFiles.runPrefix + "/");
+  log(`✓ cleaned up staged inputs`);
 }
 
 main().catch((e) => die(e?.stack || String(e)));

@@ -25,7 +25,7 @@ Estimated time once entitlements are in place: ~1–2 hours. The **entitlement**
 - An **IMS org** where you can get the Firefly Services product (Part 1).
 - An **AEM as a Cloud Service** environment (dev/stage) you have Developer access to.
 - **App Builder** access in that org + the `aio` CLI (`npm i -g @adobe/aio-cli`).
-- A cloud storage bucket you can make presigned URLs from (Azure Blob or AWS S3).
+- An App Builder Runtime namespace (Adobe I/O Files is provisioned with it).
 - The `magick` CLI (ImageMagick) only if you want to build showcase collages.
 
 ---
@@ -63,19 +63,23 @@ Custom-script registration on the InDesign API accepts **only** a Developer Cons
 
 ---
 
-## Part 3 — Presigned storage for inputs
+## Part 3 — Durable input staging
 
 The InDesign API fetches inputs from **URLs it can reach unauthenticated**. AEM
-author can't serve those directly, so we stage inputs in a presigned bucket.
+author can't serve those directly, and Runtime `/tmp` is private and
+ephemeral, so the render action stages each input in Adobe I/O Files:
 
-**Azure Blob (simplest — the SAS is both the upload cred and the read URL):**
-1. Create a Storage account → a **container** (e.g. `banner-inputs`, private).
-2. Container → **Shared access tokens** → permissions **Read, Add, Create, Write,
-   List**, HTTPS only, a few days' expiry → **Generate SAS token and URL**.
-3. Keep the container blob endpoint + the SAS query string.
+1. Add `@adobe/aio-lib-files` to the Runtime action (it is declared in
+   `cloud/package.json`).
+2. Let the action initialize the SDK with `init()`. App Builder injects the
+   Runtime namespace credentials; do not paste an Azure SAS or storage key.
+3. Upload under a unique per-run prefix and call
+   `generatePresignURL(path, { expiryInSeconds: 3600 })`.
+4. Delete the prefix after the InDesign job's outputs have been written to AEM.
 
-(AWS S3 also works — `cloud/run.mjs` has an `s3` seam; you'd generate presigned
-GET URLs for inputs.)
+The AEM engine implements this flow in `cloud/aem-render.mjs`. Adobe I/O Files
+is durable enough for the lifetime of a render job and is externally reachable,
+while `/tmp` remains useful only for local scratch work inside one container.
 
 ---
 
@@ -125,10 +129,6 @@ IMS_ENDPOINT=https://ims-na1.adobelogin.com/ims/token/v3     # prod
 INDESIGN_API_BASE=https://indesign.adobe.io                  # prod (match the token env)
 CAPABILITY_VERSION=1.0.0
 
-# Presigned storage (Part 3)
-STORAGE_MODE=azure
-AZURE_BLOB_BASE=https://<account>.blob.core.windows.net/<container>?<SAS query>
-
 # AEM (Part 4)
 AEM_AUTHOR_URL=https://author-p<program>-e<env>.adobeaemcloud.com
 AEM_DEV_TOKEN=<local development token>
@@ -173,7 +173,7 @@ Then render (start with 1 row to smoke-test):
 node cloud/aem-render.mjs --folder /content/dam/<program>/<job-folder> --run --max-rows 1
 ```
 
-The engine reads + classifies the folder, stages inputs to your bucket, executes
+The engine reads + classifies the folder, stages inputs to Adobe I/O Files, executes
 the InDesign API, and writes outputs back to `<folder>/output` **unpublished**.
 Confirm they appear in AEM, then drop `--max-rows` for the full set.
 
@@ -225,7 +225,7 @@ Templates → **All Extension Points** → **`@adobe/aem-assets-assetsview-ext-t
 **server-side handler** (the Runtime action).
 
 **3. Wire the action** (`ext.config.yaml` inputs, values from `.env`): the FFS OAuth
-S2S creds, `INDESIGN_EXECUTE_URL`, the presigned-storage config (`AZURE_BLOB_BASE`),
+S2S creds and `INDESIGN_EXECUTE_URL`,
 `AEM_AUTHOR_URL`, and the base64 Service Credential (`AEM_SC_JSON`). Set
 **`require-adobe-auth: false`** — with it `true`, aio deploys only `__secured_*`
 without the public route in some namespaces, so the action URL **404s**. Raise the
