@@ -73,6 +73,13 @@ Create one InDesign document with **one page per placement size**. On each page:
 > merely on a containing group or layer. `outputFileName` is reserved for output
 > naming. Add logos, legal lines, backgrounds, etc. freely.
 
+These screenshots show where to look in InDesign. A paragraph style name is not
+the frame label; set the CSV-matching value in the Script Label panel:
+
+![Paragraph Styles panel — this is not the frame Script Label](../docs/images/indesign-paragraph-styles-not-script-label.png)
+
+![Script Label panel — set the matching CSV header here](../docs/images/indesign-script-label-panel.png)
+
 This repo can also **generate** a template from a spec — see
 [`scripts/build_template.jsx`](../scripts/build_template.jsx), which builds all
 pages, frames, and labels from the `PAGES` definition in

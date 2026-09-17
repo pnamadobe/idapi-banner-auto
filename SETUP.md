@@ -199,6 +199,12 @@ not set the Script Label for a text frame. Additional static design elements can
 remain unlabeled. `outputFileName` is reserved for output naming and does not
 need a frame.
 
+The screenshots below show the difference:
+
+![Paragraph Styles panel — this does not set a Script Label](docs/images/indesign-paragraph-styles-not-script-label.png)
+
+![Script Label panel on the selected frame — set the CSV-matching label here](docs/images/indesign-script-label-panel.png)
+
 The pagemap CSV is the authoritative page-to-artboard mapping:
 
 ```csv

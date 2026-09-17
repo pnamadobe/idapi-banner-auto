@@ -59,6 +59,13 @@ any matching label is valid. Every variations CSV column except the reserved
 Styles panel is separate; a paragraph style named `header` does not set a
 frame's Script Label.
 
+Use the Script Label panel on the selected image or text frame—not the
+Paragraph Styles panel:
+
+![Paragraph Styles panel — not the frame Script Label](../docs/images/indesign-paragraph-styles-not-script-label.png)
+
+![Script Label panel — set the matching CSV header here](../docs/images/indesign-script-label-panel.png)
+
 The pagemap CSV maps 1-based InDesign page order to output artboard names:
 
 ```csv
