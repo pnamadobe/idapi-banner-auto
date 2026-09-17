@@ -1,0 +1,23 @@
+{
+  "name": "idapi-banners",
+  "id": "idapi-banners",
+  "description": "Automate banner generation using InDesign API",
+  "version": "0.0.1",
+  "actionBarActions": [
+    {
+      "label": "InDesign Banners generation",
+      "icon": "AdDisplay",
+      "needsModal": true,
+      "modalTitle": "Banners from InDesign template",
+      "modalType": "modal",
+      "modalSize": "M",
+      "id": "indesign-banners-generation",
+      "componentName": "ModalIndesignBannersGeneration"
+    }
+  ],
+  "runtimeActions": [
+    {
+      "name": "generate-idapi-banners"
+    }
+  ]
+}

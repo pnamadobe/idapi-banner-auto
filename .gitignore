@@ -23,5 +23,6 @@ run_debrand.sh
 # Internal follow-ups (real technical-account id + personal Azure container) — keep local.
 TODO.md
 
-# App Builder extension (holds env/config wiring) — not part of the public code drop.
-aem-extension/
+# App Builder extension: source and deployment manifests are tracked.
+# Its nested .gitignore excludes credentials, local environment files, caches,
+# dependencies, generated bundles, and deployment output.

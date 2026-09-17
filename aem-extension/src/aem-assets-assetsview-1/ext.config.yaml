@@ -1,0 +1,46 @@
+operations:
+  view:
+    - type: web
+      impl: index.html
+actions: actions
+web: web-src
+hooks:
+  post-app-deploy: ./hooks/post-deploy.js
+runtimeManifest:
+  packages:
+    aem-assets-assetsview-1:
+      license: Apache-2.0
+      actions:
+        generate-idapi-banners:
+          function: actions/generate-idapi-banners/index.js
+          web: 'yes'
+          runtime: nodejs:22
+          inputs:
+            LOG_LEVEL: debug
+            # InDesign API (Firefly Services) — OAuth Server-to-Server credential
+            FFS_CLIENT_ID: $FFS_CLIENT_ID
+            FFS_CLIENT_SECRET: $FFS_CLIENT_SECRET
+            FFS_ORG_ID: $FFS_ORG_ID
+            IMS_ENDPOINT: $IMS_ENDPOINT
+            INDESIGN_EXECUTE_URL: $INDESIGN_EXECUTE_URL
+            # Input staging uses Adobe I/O Files (@adobe/aio-lib-files) — storage
+            # provisioned with the app; no external bucket/SAS to configure.
+            # AEM author + the action's own AEM auth (read inputs / write outputs).
+            # AEM_SC_JSON (base64 Service Credential) is durable; AEM_DEV_TOKEN is a
+            # dev-token fallback.
+            AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            AEM_SC_JSON: $AEM_SC_JSON
+            AEM_DEV_TOKEN: $AEM_DEV_TOKEN
+            # Shared brand-fonts folder in the DAM (staged into the job's
+            # "Document Fonts/"). Optional per-job <folder>/fonts overrides it.
+            AEM_FONTS_PATH: $AEM_FONTS_PATH
+          limits:
+            timeout: 600000      # 10 min — render + AEM write-back is long-running
+            memorySize: 512
+          annotations:
+            # We authenticate by *using* the caller's token for AEM (the action
+            # requires the Authorization header). The gateway auth-wrapper
+            # (require-adobe-auth) deploys only __secured_* without the public
+            # sequence in this namespace, which 404s — so validate in-action instead.
+            require-adobe-auth: false
+            final: true
