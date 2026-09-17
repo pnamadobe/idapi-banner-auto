@@ -56,15 +56,16 @@ configuration.
 ```
 
 The Runtime action reads `AEM_SC_JSON` (preferred durable Service Credential)
-and the Firefly values at deploy time. Replace every
+and `AEM_AUTHOR_URL` plus the Firefly values at deploy time. Set
+`AEM_AUTHOR_URL` to the author URL for the AEM environment where the extension
+is enabled. Replace every
 environment-specific value with one from your own org; do not copy another
 team member's `.env`.
 
 When Assets View supplies the current author URL in its resource or host
 metadata, the extension passes that URL with the job and uses it for the
-request. `AEM_AUTHOR_URL` is optional and remains available as a fallback for
-hosts that do not expose that metadata (and for local tests), so one deployment
-can work across environments without embedding an environment ID.
+request. Keep `AEM_AUTHOR_URL` configured regardless: it is required for
+deployment and is the fallback when host metadata is unavailable.
 
 ### `app.config.yaml`
 

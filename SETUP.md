@@ -228,8 +228,10 @@ Templates → **All Extension Points** → **`@adobe/aem-assets-assetsview-ext-t
 `aem-extension/.env`): use `aem-extension/.env.example` as the template and
 provide the FFS OAuth S2S creds and `INDESIGN_EXECUTE_URL` from your own
 Developer Console project and base64 Service Credential (`AEM_SC_JSON`). The
-AEM author URL is discovered from Assets View when available; `AEM_AUTHOR_URL`
-is an optional fallback for local testing or hosts without that metadata. Set
+AEM author URL must also be set in `aem-extension/.env` as
+`AEM_AUTHOR_URL=https://author-p<program>-e<env>.adobeaemcloud.com`. Assets View
+metadata may override it when available, but the env value is required as the
+deployment fallback. Set
 **`require-adobe-auth: false`** — with it `true`, aio deploys only `__secured_*`
 without the public route in some namespaces, so the action URL **404s**. Raise the
 action `limits.timeout` (renders take minutes).
@@ -238,7 +240,7 @@ At runtime the extension first looks for the current author URL in the Assets
 View host/resource metadata and passes it to the action. This avoids relying on
 environment IDs such as `p59602` or `e520244` when Assets View exposes the
 metadata. Keep `AEM_AUTHOR_URL` configured as a fallback because some hosts do
-not provide it. Ensure the Service Credential has access to every target
+not provide it. Ensure the Service Credential has access to the configured
 environment the deployment may use.
 
 **4. Deploy + publish.**
