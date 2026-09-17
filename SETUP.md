@@ -177,6 +177,40 @@ The engine reads + classifies the folder, stages inputs to Adobe I/O Files, exec
 the InDesign API, and writes outputs back to `<folder>/output` **unpublished**.
 Confirm they appear in AEM, then drop `--max-rows` for the full set.
 
+### InDesign template contract
+
+The `.indd` must contain one InDesign **page** for each output artboard/placement.
+The automation does not infer content from layer names or from the visible page
+name. Add Script Labels to the actual swappable page items:
+
+| Page item | Required Script Label | Filled from |
+|---|---|---|
+| Hero image graphic frame | `hero` | the `hero` column in `variations.csv` |
+| Headline text frame | `header` | the `header` column in `variations.csv` |
+| City/location text frame | `city` | the `city` column in `variations.csv` |
+
+In InDesign, select each frame and open **Window > Utilities > Script Label**;
+enter the label exactly, including lowercase spelling. The label must be on the
+image or text frame itself, not only on a group, layer, or paragraph style.
+Additional static design elements can remain unlabeled.
+
+The pagemap CSV is the authoritative page-to-artboard mapping:
+
+```csv
+pagenumber,pagename
+1,WEB_LEADERBOARD_1000x320
+2,WEB_HP_SLIDER_1440x500
+3,WEB_BRAND_PAGE_BANNER_2880x900
+```
+
+`pagenumber` is the 1-based order of the page in the `.indd` (page 1, page 2,
+page 3, and so on). `pagename` is the output artboard name: it prefixes rendered
+filenames and is also used to look up an optional paragraph-style group with the
+same name. Keep one row for every InDesign page, in the same order; do not use
+the InDesign page's displayed name as a substitute for `pagename`. If a page is
+missing from the CSV, the exporter falls back to a padded number such as `01`,
+but that page will not have the intended artboard name.
+
 **Fonts.** The render environment only has the fonts you ship with the job (they
 land in a `Document Fonts/` folder next to the template, which InDesign
 auto-activates). Adobe Fonts are present on the servers, but bundling guarantees

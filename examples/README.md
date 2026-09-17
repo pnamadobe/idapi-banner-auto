@@ -50,11 +50,11 @@ Create one InDesign document with **one page per placement size**. On each page:
 
 1. **Size the page** to the placement's exact pixel dimensions (e.g. a page that
    is `1000 × 320` px for a leaderboard). Different pages can be different sizes.
-2. **Add a hero image frame** and give it the **script label** `hero`
+2. **Add a hero image frame** and give the frame itself the **script label** `hero`
    (select the frame → *Window ▸ Utilities ▸ Script Label* → type `hero`). The
    exporter places each row's image here and fits it *fill-proportionally, centered*.
-3. **Add text frames** for your copy and label them `header` and `city` the same
-   way. The exporter flows each row's text into the matching label.
+3. **Add text frames** for your copy and label the frames themselves `header` and
+   `city` the same way. The exporter flows each row's text into the matching label.
 4. **Put your brand in the template** — logo, colors, fonts, grid. This is what
    guarantees every output is on-brand; the script never adds branding.
 5. *(Optional, for precise typography)* create a **paragraph style group named
@@ -62,9 +62,11 @@ Create one InDesign document with **one page per placement size**. On each page:
    paragraph styles named `header` and `city`. When present, the exporter applies
    them, so each size can have its own type treatment.
 
-> **Tip:** the labels (`hero`, `header`, `city`) are the contract. Any frame with
-> those labels gets filled; anything else on the page is left untouched. Add
-> logos, legal lines, backgrounds, etc. freely.
+> **Tip:** the labels (`hero`, `header`, `city`) are the contract. They must be
+> Script Labels on the actual image/text frames, not merely on a containing group,
+> layer, or paragraph style. Any frame with those labels gets filled; anything
+> else on the page is left untouched. Add logos, legal lines, backgrounds, etc.
+> freely.
 
 This repo can also **generate** a template from a spec — see
 [`scripts/build_template.jsx`](../scripts/build_template.jsx), which builds all
@@ -100,9 +102,10 @@ Notes:
 
 ## Step 3 — Write the pagemap CSV
 
-This maps each **page number** in your template to a **placement name**. The name
-becomes the prefix of the output files and (optionally) the paragraph-style-group
-name. From [`sample-pagemap.csv`](sample-pagemap.csv):
+This maps each **InDesign page number** in your template to an output **artboard
+name**. The name becomes the prefix of the output files and (optionally) the
+paragraph-style-group name. `pagenumber` is 1-based page order; `pagename` is the
+artboard name used by the exporter. From [`sample-pagemap.csv`](sample-pagemap.csv):
 
 ```csv
 pagenumber,pagename
@@ -113,9 +116,11 @@ pagenumber,pagename
 10,SOCIAL_STORY_1080x1920
 ```
 
-Page 1 of your `.indd` → `WEB_LEADERBOARD_1000x320`, and so on. Add or remove rows
-to match however many sizes your template has — nothing is fixed to ten. Give the
-file a name containing `pagemap` so the exporter finds it automatically.
+Page 1 of your `.indd` → artboard `WEB_LEADERBOARD_1000x320`, page 2 → artboard
+`WEB_HP_SLIDER_1440x500`, and so on. Add or remove rows to match however many
+pages your template has — nothing is fixed to ten. Give the file a name containing
+`pagemap` so the exporter finds it automatically. Keep the rows in page order;
+the exporter uses the CSV mapping rather than the page's displayed InDesign name.
 
 ## Step 4 — Add your imagery
 

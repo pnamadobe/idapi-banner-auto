@@ -40,6 +40,31 @@ shows the row count, page count, estimated JPG count, and estimated editable
 INDD count. The page count comes from the pagemap, which is the page contract
 used by the registered InDesign capability.
 
+### Template and pagemap contract
+
+The InDesign template must have one page per output artboard. Put Script Labels
+on the actual swappable page items (not only on a group or layer):
+
+- image frame: `hero`
+- headline text frame: `header`
+- city/location text frame: `city`
+
+Use **Window > Utilities > Script Label** in InDesign and match the lowercase
+labels exactly. The `hero`, `header`, and `city` values in each variations CSV
+row are applied to those corresponding labeled frames.
+
+The pagemap CSV maps 1-based InDesign page order to output artboard names:
+
+```csv
+pagenumber,pagename
+1,WEB_LEADERBOARD_1000x320
+2,WEB_HP_SLIDER_1440x500
+```
+
+`pagenumber` must match the page's position in the `.indd`; `pagename` is the
+artboard/output name used in rendered filenames and optional paragraph-style
+groups. Include one row per template page and keep the rows in page order.
+
 ## Deploy & Cleanup
 
 - `aio app deploy` to build and deploy all actions on Runtime and static files to CDN
