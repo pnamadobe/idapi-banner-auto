@@ -92,6 +92,48 @@ function classify (entries) {
   const images = assets.filter((e) => isImg(e.name))
   return { template, variations, pagemap, images }
 }
+function csvRecords (text) {
+  const records = []
+  let record = ''
+  let quoted = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    record += ch
+    if (ch === '"') quoted = text[i + 1] === '"' ? quoted : !quoted
+    if ((ch === '\n' || (ch === '\r' && text[i + 1] !== '\n')) && !quoted) {
+      if (record.replace(/\r?\n$/, '').trim()) records.push(record.replace(/\r?\n$/, ''))
+      record = ''
+    }
+  }
+  if (record.trim()) records.push(record)
+  return records
+}
+async function aemContext (params) {
+  let aemToken
+  if (params.AEM_SC_JSON) aemToken = await aemTokenFromServiceCredential(params.AEM_SC_JSON)
+  else aemToken = params.AEM_DEV_TOKEN || getBearerToken(params)
+  if (!aemToken) throw new Error('no AEM token')
+  const discoveredAuthor = String(params.aemAuthorUrl || '').replace(/\/+$/, '')
+  if (discoveredAuthor && !/^https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com$/i.test(discoveredAuthor)) {
+    throw new Error('aemAuthorUrl must be an AEM Cloud author URL')
+  }
+  const author = discoveredAuthor || String(params.AEM_AUTHOR_URL || '').replace(/\/+$/, '')
+  if (!author) throw new Error('AEM_AUTHOR_URL is not configured for this deployment')
+  if (!/^https:\/\//i.test(author)) throw new Error('AEM_AUTHOR_URL must be an https URL')
+  return { author, aemToken }
+}
+async function inspectInputs (params) {
+  const { author, aemToken } = await aemContext(params)
+  const entries = await aemList(author, aemToken, params.folder)
+  const c = classify(entries)
+  const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k]).concat(c.images.length ? [] : ['images'])
+  if (missing.length) throw new Error(`folder is missing required input(s): ${missing.join(', ')}`)
+  const variationsText = (await aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`)).toString('utf8')
+  const pagemapText = (await aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)).toString('utf8')
+  const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
+  const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
+  return { variationRows, pageCount, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name }
+}
 function destFor (kind, name) {
   if (kind === 'template') return 'template/brand-template.indd'
   if (kind === 'variations') return 'input/brand-variations.csv'
@@ -187,17 +229,7 @@ async function processBatch (params, job, state) {
 
     // Authenticate to AEM: prefer the durable Service Credential (JWT, minted fresh
     // each run); fall back to a dev token or the caller's token.
-    let aemToken
-    if (params.AEM_SC_JSON) aemToken = await aemTokenFromServiceCredential(params.AEM_SC_JSON)
-    else aemToken = params.AEM_DEV_TOKEN || getBearerToken(params)
-    if (!aemToken) return errorResponse(401, 'no AEM token', logger)
-    const discoveredAuthor = String(params.aemAuthorUrl || '').replace(/\/+$/, '')
-    if (discoveredAuthor && !/^https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com$/i.test(discoveredAuthor)) {
-      return errorResponse(400, 'aemAuthorUrl must be an AEM Cloud author URL', logger)
-    }
-    const author = discoveredAuthor || String(params.AEM_AUTHOR_URL || '').replace(/\/+$/, '')
-    if (!author) return errorResponse(500, 'AEM_AUTHOR_URL is not configured for this deployment', logger)
-    if (!/^https:\/\//i.test(author)) return errorResponse(500, 'AEM_AUTHOR_URL must be an https URL', logger)
+    const { author, aemToken } = await aemContext(params)
     const folder = params.folder                        // /content/dam/<...>
     const maxRows = params.maxRows ? Number(params.maxRows) : 0
     const rowOffset = params.rowOffset ? Number(params.rowOffset) : 0
@@ -293,3 +325,4 @@ async function processBatch (params, job, state) {
 }
 
 exports.processBatch = processBatch
+exports.inspectInputs = inspectInputs

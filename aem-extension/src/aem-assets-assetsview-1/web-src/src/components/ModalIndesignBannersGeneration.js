@@ -41,6 +41,8 @@ export default function ModalIndesignBannersGeneration() {
   const [status, setStatus] = useState('idle'); // idle | running | done | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [estimate, setEstimate] = useState(null);
+  const [estimateError, setEstimateError] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -49,6 +51,19 @@ export default function ModalIndesignBannersGeneration() {
       try { const t = await gc.host.theme.getThemeInfo(); if (t && t.colorScheme) setColorScheme(t.colorScheme); } catch (e) {}
     })();
   }, []);
+
+  useEffect(() => {
+    if (!folder) return;
+    const url = resolveActionUrl();
+    if (!url) return;
+    actionWebInvoke(url, {}, { folder, aemAuthorUrl, preflight: '1' })
+      .then((res) => {
+        const body = res && res.body ? res.body : res;
+        if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || 'Unable to inspect inputs');
+        setEstimate(body);
+      })
+      .catch((e) => setEstimateError(String(e.message || e)));
+  }, [folder, aemAuthorUrl]);
 
   const close = () => guestConnection && guestConnection.host.modal.closeDialog();
 
@@ -110,6 +125,18 @@ export default function ModalIndesignBannersGeneration() {
               Choose <b>Generate banners</b> for images only, or <b>+ editable InDesign</b> to also
               write a reopenable <code>.indd</code> per variation (larger output).
             </Text>
+            {estimate && (
+              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+                <Flex direction="column" gap="size-50">
+                  <Text><b>Rows to execute:</b> {estimate.variationRows}</Text>
+                  <Text><b>Template pages:</b> {estimate.pageCount} (from pagemap)</Text>
+                  <Text><b>Estimated images:</b> {estimate.variationRows * estimate.pageCount} JPGs</Text>
+                  <Text><b>Estimated editable files:</b> {estimate.variationRows} INDDs when selected</Text>
+                </Flex>
+              </View>
+            )}
+            {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
+            {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
             <ButtonGroup orientation="vertical" width="100%">
               <Button variant="accent" width="100%" onPress={() => generate(false)}>Generate banners</Button>
               <Button variant="primary" width="100%" onPress={() => generate(true)}>Generate banners + editable InDesign</Button>

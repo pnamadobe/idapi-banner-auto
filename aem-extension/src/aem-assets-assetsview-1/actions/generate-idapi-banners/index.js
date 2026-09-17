@@ -6,6 +6,7 @@ const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
 const { errorResponse, stringParameters, checkMissingRequestInputs } = require('../utils')
 const { keyFor, publicJob } = require('../job-utils')
+const { inspectInputs } = require('./engine')
 
 const ttl = 7 * 24 * 3600
 
@@ -28,6 +29,10 @@ async function main (params) {
     const missing = checkMissingRequestInputs(params, ['folder'], [])
     if (missing) return errorResponse(400, missing, logger)
     if (!params.AEM_SC_JSON && !params.AEM_DEV_TOKEN) return errorResponse(500, 'AEM_SC_JSON or AEM_DEV_TOKEN must be configured for durable jobs', logger)
+    if (String(params.preflight || '') === '1') {
+      const estimate = await inspectInputs(params)
+      return { statusCode: 200, body: estimate }
+    }
     const state = await stateLib.init()
     const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
     const stateKey = keyFor(params.folder, writeIndd)

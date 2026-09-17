@@ -29,6 +29,11 @@ The Generate Banners action is a durable job launcher, not a blocking render req
 
 `generate-idapi-banners-status` returns durable status by `jobId`. Output names are tracked in state and skipped on retries, so a worker retry does not upload the same output again. Configure `AEM_SC_JSON` (recommended) or `AEM_DEV_TOKEN`; caller browser tokens are not persisted in job state.
 
+Before starting, the modal preflights the variations CSV and pagemap CSV and
+shows the row count, page count, estimated JPG count, and estimated editable
+INDD count. The page count comes from the pagemap, which is the page contract
+used by the registered InDesign capability.
+
 ## Deploy & Cleanup
 
 - `aio app deploy` to build and deploy all actions on Runtime and static files to CDN
