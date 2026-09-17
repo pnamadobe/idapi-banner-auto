@@ -215,6 +215,10 @@ presigned storage → AEM → the Assets View extension — is documented step b
 **[SETUP.md](SETUP.md)**, with a filled-in `.env` template and a troubleshooting
 table for the common gotchas.
 
+## Long-render orchestration
+
+The AEM extension starts a durable job in App Builder State and processes the variations CSV in small worker batches. Each worker invocation stays below the 600-second Runtime activation cap and queues the next batch, so closing the modal or browser does not cancel a render. A deterministic job key prevents duplicate starts, a state lock prevents concurrent workers, and completed output names are skipped on retries. See [`aem-extension/README.md`](aem-extension/README.md) for deployment and status-action details.
+
 ## Status & roadmap
 
 The full pipeline works end to end. The rendering engine, the cloud harness (IMS

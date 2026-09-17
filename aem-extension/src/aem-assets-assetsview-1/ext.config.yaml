@@ -21,6 +21,7 @@ runtimeManifest:
             FFS_CLIENT_ID: $FFS_CLIENT_ID
             FFS_CLIENT_SECRET: $FFS_CLIENT_SECRET
             FFS_ORG_ID: $FFS_ORG_ID
+            FFS_SCOPES: $FFS_SCOPES
             IMS_ENDPOINT: $IMS_ENDPOINT
             INDESIGN_EXECUTE_URL: $INDESIGN_EXECUTE_URL
             # Input staging uses Adobe I/O Files (@adobe/aio-lib-files) — storage
@@ -43,4 +44,34 @@ runtimeManifest:
             # (require-adobe-auth) deploys only __secured_* without the public
             # sequence in this namespace, which 404s — so validate in-action instead.
             require-adobe-auth: false
+            final: true
+        generate-idapi-banners-worker:
+          function: actions/generate-idapi-banners-worker.js
+          web: 'yes'
+          runtime: nodejs:22
+          inputs:
+            LOG_LEVEL: debug
+            FFS_CLIENT_ID: $FFS_CLIENT_ID
+            FFS_CLIENT_SECRET: $FFS_CLIENT_SECRET
+            FFS_ORG_ID: $FFS_ORG_ID
+            FFS_SCOPES: $FFS_SCOPES
+            IMS_ENDPOINT: $IMS_ENDPOINT
+            INDESIGN_EXECUTE_URL: $INDESIGN_EXECUTE_URL
+            AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            AEM_SC_JSON: $AEM_SC_JSON
+            AEM_DEV_TOKEN: $AEM_DEV_TOKEN
+            AEM_FONTS_PATH: $AEM_FONTS_PATH
+          limits:
+            timeout: 600000
+            memorySize: 512
+          annotations:
+            final: true
+        generate-idapi-banners-status:
+          function: actions/generate-idapi-banners-status.js
+          web: 'yes'
+          runtime: nodejs:22
+          limits:
+            timeout: 30000
+            memorySize: 256
+          annotations:
             final: true

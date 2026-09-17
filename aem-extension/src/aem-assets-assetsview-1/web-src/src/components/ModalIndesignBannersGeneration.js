@@ -72,7 +72,9 @@ export default function ModalIndesignBannersGeneration() {
     if (outcome.err) { setError(String((outcome.err && outcome.err.message) || outcome.err)); setStatus('error'); return; }
     const res = outcome.r;
     if (res && (res.error || (res.statusCode && res.statusCode >= 400))) { setError(res.error || ('action returned ' + res.statusCode)); setStatus('error'); return; }
-    setResult(res); setStatus('done');
+    const body = res && res.body ? res.body : res;
+    setResult(body);
+    setStatus(body && (body.status === 'queued' || body.status === 'running') ? 'started' : 'done');
   }
 
   return (
@@ -131,6 +133,7 @@ export default function ModalIndesignBannersGeneration() {
               <b> {folder}/output</b> in a few minutes — unpublished, ready for your review.
               You can close this dialog; the job keeps running in the background.
             </Text>
+            {result && result.jobId && <Text>Job ID: <code>{result.jobId}</code></Text>}
             <ButtonGroup><Button variant="accent" onPress={close}>Close</Button></ButtonGroup>
           </Flex>
         )}

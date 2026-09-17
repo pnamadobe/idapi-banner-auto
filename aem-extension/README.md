@@ -23,6 +23,12 @@ For more information on the difference between `aio app run` and `aio app dev`, 
 - Run `aio app test` to run unit tests for ui and actions
 - Run `aio app test --e2e` to run e2e tests
 
+### Long renders
+
+The Generate Banners action is a durable job launcher, not a blocking render request. It stores a seven-day job record in App Builder State and queues `generate-idapi-banners-worker`. Each worker invocation renders at most two CSV rows (configurable with `batchSize`, capped at ten), then queues the next worker before returning. This keeps every activation below Runtime's 600-second limit and means closing the AEM modal does not cancel the job.
+
+`generate-idapi-banners-status` returns durable status by `jobId`. Output names are tracked in state and skipped on retries, so a worker retry does not upload the same output again. Configure `AEM_SC_JSON` (recommended) or `AEM_DEV_TOKEN`; caller browser tokens are not persisted in job state.
+
 ## Deploy & Cleanup
 
 - `aio app deploy` to build and deploy all actions on Runtime and static files to CDN
