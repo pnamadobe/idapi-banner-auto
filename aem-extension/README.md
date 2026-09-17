@@ -49,10 +49,15 @@ are intentionally flexible:
 - image frame: any label matching an image column header
 - text frame: any label matching a text column header
 
-Use **Window > Utilities > Script Label** in InDesign and match the CSV header
-exactly, including spaces and capitalization. Every variations CSV column except
-the reserved `outputFileName` column is applied to the frame with the matching
-label. `outputFileName` controls output naming and does not need a frame.
+For both image and text elements, select the actual frame, open **Window >
+Utilities > Script Label**, and match the CSV header exactly, including spaces
+and capitalization. For example, an image frame may show `hero` and a text frame
+may show `headline` in the Script Label field, but neither name is required:
+any matching label is valid. Every variations CSV column except the reserved
+`outputFileName` column is applied to the frame with the matching label.
+`outputFileName` controls output naming and does not need a frame. The Paragraph
+Styles panel is separate; a paragraph style named `header` does not set a
+frame's Script Label.
 
 The pagemap CSV maps 1-based InDesign page order to output artboard names:
 

@@ -50,11 +50,13 @@ Create one InDesign document with **one page per placement size**. On each page:
 
 1. **Size the page** to the placement's exact pixel dimensions (e.g. a page that
    is `1000 × 320` px for a leaderboard). Different pages can be different sizes.
-2. Add an image frame and give the frame itself a Script Label that exactly
+2. Add an image frame and give the frame itself a Script Label. Select the frame,
+   open **Window ▸ Utilities ▸ Script Label**, and enter a label that exactly
    matches the corresponding image column header in the variations CSV (for
-   example, `Hero Image` or `background_asset`). The exporter places each row's
-   image there and fits it *fill-proportionally, centered*.
-3. Add text frames and give each frame a Script Label that exactly matches its
+   example, `hero`, `Hero Image`, or `background_asset`). The exporter places each
+   row's image there and fits it *fill-proportionally, centered*.
+3. Add text frames and give each frame its own Script Label using the same
+   **Window ▸ Utilities ▸ Script Label** panel. The label must exactly match the
    corresponding CSV column header (for example, `Headline` or `Location`). The
    exporter flows each row's text into the matching label.
 4. **Put your brand in the template** — logo, colors, fonts, grid. This is what
@@ -65,10 +67,11 @@ Create one InDesign document with **one page per placement size**. On each page:
    the exporter applies them, so each size can have its own type treatment.
 
 > **Tip:** the CSV headers and Script Labels are the contract. They can use any
-> names that make sense for your template, but each must match exactly. Labels
-> must be on the actual image/text frames, not merely on a containing group,
-> layer, or paragraph style. `outputFileName` is reserved for output naming.
-> Add logos, legal lines, backgrounds, etc. freely.
+> names that make sense for your template, but each must match exactly. The
+> Paragraph Styles panel is not the Script Label panel: a style named `header`
+> does not label a frame. Labels must be on the actual image/text frames, not
+> merely on a containing group or layer. `outputFileName` is reserved for output
+> naming. Add logos, legal lines, backgrounds, etc. freely.
 
 This repo can also **generate** a template from a spec — see
 [`scripts/build_template.jsx`](../scripts/build_template.jsx), which builds all

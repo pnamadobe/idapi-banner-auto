@@ -188,12 +188,16 @@ name. Add Script Labels to the actual swappable page items:
 | Image graphic frame | Any label you choose | the CSV column with the same header |
 | Text frame | Any label you choose | the CSV column with the same header |
 
-In InDesign, select each frame and open **Window > Utilities > Script Label**;
-enter the label exactly as it appears in the CSV header, including spaces and
-capitalization. The label must be on the image or text frame itself, not only on
-a group, layer, or paragraph style. Additional static design elements can remain
-unlabeled. `outputFileName` is reserved for output naming and does not need a
-frame.
+For **both image and text elements**, select the actual frame and open
+**Window > Utilities > Script Label**, then enter the label in the Script Label
+field. For example, an image frame might show `hero` and a text frame might show
+`headline`. These are only examples; use any labels that match the CSV headers
+exactly, including spaces and capitalization. The label must be on the image or
+text frame itself, not only on a group, layer, or paragraph style. The
+**Paragraph Styles** panel is separate: a paragraph style named `header` does
+not set the Script Label for a text frame. Additional static design elements can
+remain unlabeled. `outputFileName` is reserved for output naming and does not
+need a frame.
 
 The pagemap CSV is the authoritative page-to-artboard mapping:
 
