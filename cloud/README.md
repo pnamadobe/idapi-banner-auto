@@ -85,12 +85,20 @@ document — so drop the font files in `template/Document Fonts/` and they trave
 with the job. Source Sans 3 is OFL (safe to bundle); a brand's licensed typeface
 is a separate licensing decision.
 
-## Storage (the one piece to finalize)
+## Storage
 
-The InDesign API downloads inputs from URLs and writes outputs to URLs. Where
-those live is a deployment decision (Adobe temporary storage vs your own
-S3/Azure vs AEM delivery/presigned URLs). Adobe temporary storage is
-**outputs-only** — omit `outputs` and the API returns 24h presigned result URLs;
-inputs must be real cloud-storage URLs. Until wired, `uploadInput()` and
-`makeOutputTarget()` in `run.mjs` are deliberate stubs that stop `--submit` with
-a clear message rather than guessing. Wire them for the chosen `STORAGE_MODE`.
+The AEM render engine stages each input in **Adobe I/O Files**
+(`@adobe/aio-lib-files`) and gives the InDesign API an external presigned URL.
+Files storage is provisioned with the App Builder Runtime namespace, so there is
+no team S3/Azure account or hand-managed SAS token. Each run uses a unique
+prefix and deletes that prefix after outputs are written back to AEM.
+
+This is different from the InDesign API's temporary output storage: that
+storage is outputs-only, while inputs must be reachable by an unauthenticated
+HTTP GET. Adobe I/O Files supplies that URL through
+`generatePresignURL(..., { expiryInSeconds: 3600 })`.
+
+`cloud/aem-render.mjs --run` must run as an App Builder Runtime action (or in an
+environment with the Runtime `__OW_NAMESPACE` and `__OW_API_KEY` credentials).
+The older `cloud/run.mjs --submit` CLI harness remains intentionally unwired;
+it has no Runtime namespace in which to initialize Adobe I/O Files.

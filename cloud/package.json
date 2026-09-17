@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Phase 2a harness — run generate_variations.jsx on the Adobe InDesign API",
-  "engines": { "node": ">=18" },
+  "description": "AEM-driven render engine for the Adobe InDesign API",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dry-run": "node run.mjs --dry-run",
     "check-auth": "node run.mjs --check-auth",
     "submit": "node run.mjs --submit"
+  },
+  "dependencies": {
+    "@adobe/aio-lib-files": "^4.1.4"
   }
 }
