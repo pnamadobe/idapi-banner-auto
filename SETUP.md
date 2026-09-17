@@ -145,6 +145,13 @@ node cloud/run.mjs --register       # 201; prints an execution URL
 Copy the execution URL into `cloud/.env` as `INDESIGN_EXECUTE_URL=…`.
 (Re-registering later needs a NEW `CAPABILITY_VERSION`, else 422 "already exists.")
 
+> **The script is baked into the capability.** `generate_variations.jsx` /
+> `brand_lib.jsx` run from what you registered, **not** from what the job stages.
+> Any change to those scripts only takes effect after you bump `CAPABILITY_VERSION`
+> and `--register` again. (Staged inputs — template, CSVs, images, fonts — do
+> update per run; the script does not.) The execution URL is keyed by capability
+> name, so it usually stays the same across versions — no `.env` change needed.
+
 ---
 
 ## Part 7 — Build a job folder in AEM and run the engine
@@ -157,6 +164,7 @@ In AEM Assets, create a folder (this is the "key") containing:
 | Variations CSV | a `.csv` (columns: `outputFileName,hero,city,header`) |
 | Pagemap CSV | filename contains **`pagemap`** (`pagenumber,pagename`) |
 | Hero images | the `.jpg/.png` referenced by the variations CSV |
+| `fonts/` *(optional)* | per-job font files (`.otf/.ttf/.ttc/.woff2`) — override the shared set for this job |
 | `output/` | an empty subfolder for results |
 
 Then render (start with 1 row to smoke-test):
@@ -169,10 +177,30 @@ The engine reads + classifies the folder, stages inputs to your bucket, executes
 the InDesign API, and writes outputs back to `<folder>/output` **unpublished**.
 Confirm they appear in AEM, then drop `--max-rows` for the full set.
 
-**Fonts:** `cloud/fonts/` holds Source Sans 3 (OFL), bundled automatically for
-deterministic type. Adobe Fonts are present on the InDesign API servers, but
-bundling guarantees exact output and is required for any non-Adobe brand font —
-drop your brand's font files in `cloud/fonts/`.
+**Fonts.** The render environment only has the fonts you ship with the job (they
+land in a `Document Fonts/` folder next to the template, which InDesign
+auto-activates). Adobe Fonts are present on the servers, but bundling guarantees
+exact output and is **required for any non-Adobe brand font**.
+
+- **CLI harness:** drop font files in `cloud/fonts/` — bundled automatically
+  (ships Source Sans 3, OFL, by default).
+- **AEM button:** create a shared **`/content/dam/fonts`** folder (change the path
+  with the `AEM_FONTS_PATH` action input) and drop your brand fonts there once —
+  every job picks them up. A per-job `fonts/` subfolder overrides the shared set
+  for that job (per-job wins on a filename clash).
+- The files you drop in must be the **exact families and styles the template
+  references** (e.g. `Source Sans 3` *Medium* and *Bold* as discrete static
+  fonts). A folder full of *other* fonts doesn't help — InDesign matches by
+  family + style and substitutes anything it can't find.
+- Each render preflights the template's fonts and records their status
+  (`installed` / `substituted` / `not_available`) in `result.json` and
+  `_run_log.txt`; anything not installed is flagged as a warning, so a missing
+  font surfaces instead of silently changing the output. **Always check the run
+  log's `fonts (...)` block after a render** — `substituted` means the wrong type
+  shipped even though the render "succeeded".
+- ⚠️ **Licensing:** uploading font files to a cloud render service requires a
+  license that permits server/cloud use. Adobe Fonts sidestep this; most custom
+  foundry licenses do not — check before bundling.
 
 ---
 
@@ -249,6 +277,9 @@ https://experience.adobe.com/?devMode=true&ext=<STAGE …adobeio-static.net/inde
 | AEM **403 `initiateUpload`** on write-back | Tech account lacks DAM write — add it to a DAM-write group (Part 4, step 3). |
 | Stale bundle / empty modal after deploy | `adobeio-static` caches `index.html` — bump the `?v=` cache-buster on the preview URL. |
 | **"Response not yet ready"** | Render exceeded the ~60s sync HTTP window — expected; the action finishes async and writes to AEM (fire-and-forget UX). |
+| Output uses the **wrong font** (looks "close but off") | Font substituted, not installed — the exact family+style isn't in `/content/dam/fonts` (or the per-job `fonts/`). Check the run log's `fonts (...)` block; add the discrete static weights the template references. |
+| Render fails **"Returned data file (dataURL) is not JSON"** | The script wrote an unescaped control char (e.g. InDesign's tab-delimited `Font.name`) into `result.json`. Escape `\t`/`\r`/`\n` in the JSON writer, then bump `CAPABILITY_VERSION` and re-`--register`. |
+| Script change (fonts, `.indd` output, layout) **had no effect** | The capability runs the *registered* script, not the staged one — bump `CAPABILITY_VERSION` and `--register` again (Part 6). |
 
 ---
 

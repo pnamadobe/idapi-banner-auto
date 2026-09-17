@@ -21,7 +21,10 @@
     var log = [], warn = [], written = 0, inddWritten = 0, outFiles = [];
     // InDesign API return contract: the capability must return a JSON *string*;
     // outputs are declared as workingFolder-relative paths in assetsToBeUploaded.
-    function jesc(s){ return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; }
+    // Escape for JSON: backslash + quote AND control chars. InDesign Font.name is
+    // "Family\tStyle" (embedded TAB) — a raw tab/newline is illegal inside a JSON
+    // string and makes the whole dataURL (result.json) unparseable, so escape them.
+    function jesc(s){ return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n") + '"'; }
     function successPkg(files, dataUrl){
         var a = [];
         for (var i = 0; i < files.length; i++) a.push('{"path":' + jesc(files[i]) + '}');
@@ -45,6 +48,24 @@
         try { if ($.global.BRAND_TEMPLATE) { var otpl = new File(String($.global.BRAND_TEMPLATE)); if (otpl.exists) tpl = otpl; } } catch (e) {}
         if (!tpl.exists) return failurePkg("template not found: " + tpl.fsName + " (root=" + U.root + ")");
         doc = app.open(tpl); // server has no window arg; we never save the template
+
+        // Font preflight: the cloud render box only has the fonts we ship with the
+        // job (staged into a "Document Fonts/" folder next to the template). Ask
+        // InDesign which fonts the doc needs and whether each is actually present,
+        // so a missing/substituted font surfaces as a warning + in result.json
+        // instead of silently changing how every banner looks.
+        var fontReport = [];
+        try {
+            for (var fi = 0; fi < doc.fonts.length; fi++) {
+                var ft = doc.fonts[fi], stt = ft.status, lbl;
+                if (stt === FontStatus.INSTALLED) lbl = "installed";
+                else if (stt === FontStatus.SUBSTITUTED) lbl = "substituted";
+                else if (stt === FontStatus.NOT_AVAILABLE) lbl = "not_available";
+                else lbl = "unknown";
+                fontReport.push({ name: String(ft.name), label: lbl });
+                if (lbl !== "installed") warn.push("font " + ft.name + " -> " + lbl);
+            }
+        } catch (eFont) {}
 
         var csvFile = U.file(U.CONFIG.csvRel);
         try { if ($.global.BRAND_CSV) { var ov = new File(String($.global.BRAND_CSV)); if (ov.exists) csvFile = ov; } } catch (e) {}
@@ -83,6 +104,12 @@
 
         var writeIndd = (U.CONFIG.writeIndd === true);
         try { if ($.global.BRAND_WRITE_INDD != null) { var wv = String($.global.BRAND_WRITE_INDD).toLowerCase(); writeIndd = (wv === "1" || wv === "true" || wv === "yes"); } } catch (e) {}
+        // Cloud (InDesign API): writeIndd arrives inside the "parameters" script arg
+        // (the same JSON that carries workingFolder). Match it anywhere in the blob.
+        try {
+            var pjW = app.scriptArgs.get("parameters");
+            if (pjW) { var mw = pjW.match(/"writeIndd"\s*:\s*(true|false|"[^"]*"|\d+)/i); if (mw) { var wc = String(mw[1]).replace(/"/g, "").toLowerCase(); writeIndd = (wc === "1" || wc === "true" || wc === "yes"); } }
+        } catch (e) {}
 
         // PNG prefs — lossless, keeps crisp text edges; larger files.
         app.pngExportPreferences.pngExportRange = PNGExportRangeEnum.EXPORT_RANGE;
@@ -181,8 +208,11 @@
         // write a run log next to the outputs
         var lf = new File(outDir.fsName + "/_run_log.txt");
         lf.encoding = "UTF-8"; lf.open("w");
+        var fontLines = [];
+        for (var fj = 0; fj < fontReport.length; fj++) fontLines.push(fontReport[fj].name + " [" + fontReport[fj].label + "]");
         lf.write("rows: " + csv.rows.length + "\nformat: " + fmt + "\npagemap: " + pmName +
                  "\nimages written: " + written + "\nindd written: " + inddWritten +
+                 "\n\nfonts (" + fontReport.length + "):\n" + (fontLines.length ? fontLines.join("\n") : "none") +
                  "\n\nrows: " + log.join(", ") +
                  "\n\nwarnings (" + warn.length + "):\n" + (warn.length ? warn.join("\n") : "none") + "\n");
         lf.close();
@@ -194,7 +224,9 @@
         var resultRel = "result.json";
         var rf = new File(U.root + "/" + resultRel);
         rf.encoding = "UTF-8"; rf.open("w");
-        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + '}');
+        var fontsJson = [];
+        for (var fk = 0; fk < fontReport.length; fk++) fontsJson.push('{"name":' + jesc(fontReport[fk].name) + ',"status":' + jesc(fontReport[fk].label) + '}');
+        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + ']}');
         rf.close();
         return successPkg(outFiles, resultRel);
     } catch (e) {
