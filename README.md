@@ -1,4 +1,4 @@
-# 🎨 Banner Automation — on-brand banners (using the proper tool for the job)
+# 🎨 Banner Automation — on-brand banners (using InDesign API)
 
 **One template. One CSV. Every size, every variation — rendered automatically, perfectly on-brand.**
 
