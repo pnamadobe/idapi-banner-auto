@@ -29,6 +29,12 @@ The Generate Banners action is a durable job launcher, not a blocking render req
 
 `generate-idapi-banners-status` returns durable status by `jobId`. Output names are tracked in state and skipped on retries, so a worker retry does not upload the same output again. Configure `AEM_SC_JSON` (recommended) or `AEM_DEV_TOKEN`; caller browser tokens are not persisted in job state.
 
+Each job also writes `_idapi-job.json` into the AEM `output/` folder after
+starting and after every batch. It contains the job ID, status, row progress,
+output count, timestamps, and any failure message, so diagnostics do not depend
+on recovering an App Builder State key. The status action can resolve a job from
+the folder manifest when called with `folder` instead of `jobId`.
+
 Before starting, the modal preflights the variations CSV and pagemap CSV and
 shows the row count, page count, estimated JPG count, and estimated editable
 INDD count. The page count comes from the pagemap, which is the page contract

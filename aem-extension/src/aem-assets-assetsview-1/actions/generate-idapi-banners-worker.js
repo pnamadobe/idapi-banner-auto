@@ -1,9 +1,10 @@
 const stateLib = require('@adobe/aio-lib-state')
-const { processBatch } = require('./generate-idapi-banners/engine')
+const { processBatch, aemContext, writeJobManifest } = require('./generate-idapi-banners/engine')
 const { errorResponse } = require('./utils')
 
 async function main (params) {
   const state = await stateLib.init()
+  let context
   const jobId = String(params.jobId || '')
   if (!/^[a-f0-9]{48}$/.test(jobId)) return errorResponse(400, 'invalid jobId')
   const stateKey = `idapi-job-${jobId}`
@@ -17,6 +18,8 @@ async function main (params) {
     if (job.status === 'completed') return { statusCode: 200, body: job }
     job.status = 'running'
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+    context = await aemContext({ ...params, aemAuthorUrl: job.aemAuthorUrl, folder: job.folder })
+    await writeJobManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })
     const result = await processBatch({ ...params, folder: job.folder, aemAuthorUrl: job.aemAuthorUrl, writeIndd: job.writeIndd ? '1' : '', maxRows: job.batchSize, rowOffset: job.rowOffset }, job, state)
     if (result && result.error) throw new Error(result.error.body && result.error.body.error ? result.error.body.error : 'batch failed')
     const rows = result.body && result.body.batchRows ? result.body.batchRows : 0
@@ -28,6 +31,7 @@ async function main (params) {
       await queueNext(job)
     }
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+    await writeJobManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })
     return { statusCode: 200, body: job }
   } catch (error) {
     const current = await state.get(stateKey)
@@ -35,6 +39,7 @@ async function main (params) {
     job.status = 'failed'
     job.error = error.message
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+    if (context) await writeJobManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })
     return errorResponse(500, `generation failed: ${error.message}`)
   } finally {
     await state.delete(lockKey)

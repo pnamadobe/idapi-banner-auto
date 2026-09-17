@@ -70,6 +70,10 @@ runtimeManifest:
           function: actions/generate-idapi-banners-status.js
           web: 'yes'
           runtime: nodejs:22
+          inputs:
+            AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            AEM_SC_JSON: $AEM_SC_JSON
+            AEM_DEV_TOKEN: $AEM_DEV_TOKEN
           limits:
             timeout: 30000
             memorySize: 256

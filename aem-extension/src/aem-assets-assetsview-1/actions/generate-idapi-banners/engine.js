@@ -152,6 +152,10 @@ function mimeOf (name) {
   if (/\.txt$/i.test(name)) return 'text/plain'
   return 'application/octet-stream'
 }
+const jobManifestName = '_idapi-job.json'
+async function writeJobManifest (author, token, folder, manifest) {
+  await aemUpload(author, token, folder + '/output', jobManifestName, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'), 'application/json')
+}
 function truncateCsv (text, n, offset = 0) {
   // Keep quoted newlines intact; the JSX CSV reader accepts RFC-4180 records.
   const records = []
@@ -326,3 +330,7 @@ async function processBatch (params, job, state) {
 
 exports.processBatch = processBatch
 exports.inspectInputs = inspectInputs
+exports.aemContext = aemContext
+exports.aemDownload = aemDownload
+exports.writeJobManifest = writeJobManifest
+exports.jobManifestName = jobManifestName
