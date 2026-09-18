@@ -226,8 +226,13 @@ export default function ModalIndesignBannersGeneration() {
 
         {status === 'done' && result && (
           <Flex direction="column" gap="size-150">
-            <Heading level={3}>✓ {result.count} banner(s) generated</Heading>
-            <Text>Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.</Text>
+            <Heading level={3}>{result.reused ? '✓ Existing generation found' : `✓ ${result.count} banner(s) generated`}</Heading>
+            <Text>
+              {result.reused
+                ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
+                : 'The generation completed successfully.'}
+              {' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.
+            </Text>
             {result.jobId && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
                 <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
