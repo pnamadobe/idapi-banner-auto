@@ -40,7 +40,16 @@ async function main (params) {
     if (existing) {
       const job = JSON.parse(existing.value)
       if (job.status === 'queued' || job.status === 'running') return { statusCode: 202, body: publicJob(job) }
-      if (job.status === 'completed') return { statusCode: 200, body: { ...publicJob(job), reused: true } }
+      if (job.status === 'completed') {
+        job.status = 'queued'
+        job.rowOffset = 0
+        job.outputs = []
+        delete job.error
+        job.retriedAt = new Date().toISOString()
+        await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
+        await invoke('generate-idapi-banners-worker', { jobId: job.jobId })
+        return { statusCode: 202, body: publicJob(job) }
+      }
       if (job.status === 'failed') {
         job.status = 'queued'
         delete job.error
