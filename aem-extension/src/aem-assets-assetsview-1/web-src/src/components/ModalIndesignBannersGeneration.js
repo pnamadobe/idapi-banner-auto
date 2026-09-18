@@ -228,6 +228,12 @@ export default function ModalIndesignBannersGeneration() {
           <Flex direction="column" gap="size-150">
             <Heading level={3}>✓ {result.count} banner(s) generated</Heading>
             <Text>Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.</Text>
+            {result.jobId && (
+              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+                <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
+                <Text>Keep this ID if you need to check the manifest or troubleshoot the generation.</Text>
+              </View>
+            )}
             {Array.isArray(result.outputs) && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-2000" overflow="auto">
                 <Text>{result.outputs.slice(0, 20).join(', ')}{result.outputs.length > 20 ? ' …' : ''}</Text>
