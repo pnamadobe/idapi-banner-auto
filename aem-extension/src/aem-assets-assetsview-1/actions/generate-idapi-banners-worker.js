@@ -17,6 +17,7 @@ async function main (params) {
     const job = JSON.parse(current.value)
     if (job.status === 'completed') return { statusCode: 200, body: job }
     job.status = 'running'
+    job.updatedAt = new Date().toISOString()
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
     context = await aemContext({ ...params, aemAuthorUrl: job.aemAuthorUrl, folder: job.folder })
     await writeJobManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })
@@ -27,6 +28,7 @@ async function main (params) {
     if (rows < job.batchSize) job.status = 'completed'
     else {
       job.status = 'queued'
+      job.queuedAt = new Date().toISOString()
       await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
       await queueNext(job)
     }

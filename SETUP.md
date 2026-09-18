@@ -225,6 +225,11 @@ and the manifest; it does not report an output that is missing from AEM.
 Retrying a failed job starts a new worker with a fresh token and preserves
 already verified outputs.
 
+If a batch handoff is delayed or lost, the status action automatically wakes
+the worker when a job has remained queued for more than 45 seconds. The worker
+lock makes this recovery safe if the original invocation starts at the same
+time, so a user does not need to manually wake the job.
+
 ### InDesign template contract
 
 The `.indd` must contain one InDesign **page** for each output artboard/placement.
