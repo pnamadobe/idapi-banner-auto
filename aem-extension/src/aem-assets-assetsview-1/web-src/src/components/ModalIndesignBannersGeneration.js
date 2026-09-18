@@ -27,10 +27,16 @@ function readJob() {
   const sp = new URLSearchParams(q);
   return { folder: sp.get('folder') || '', template: sp.get('template') || '', aemAuthorUrl: sp.get('aemAuthorUrl') || '' };
 }
-function resolveActionUrl() {
+function resolveActionUrl(action = 'generate-idapi-banners') {
   // config.json is populated at build/deploy with { "<pkg>/<action>": "https://…" }
-  const hit = Object.entries(actionsConfig || {}).find(([k]) => k.includes('generate-idapi-banners'));
+  const hit = Object.entries(actionsConfig || {}).find(([k]) => k.endsWith(`/${action}`) || k === action);
   return hit ? hit[1] : null;
+}
+
+async function deterministicJobId(folder, writeIndd) {
+  const input = new TextEncoder().encode(`${folder}|${writeIndd ? '1' : '0'}`);
+  const digest = await crypto.subtle.digest('SHA-256', input);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 48);
 }
 
 export default function ModalIndesignBannersGeneration() {
@@ -65,6 +71,39 @@ export default function ModalIndesignBannersGeneration() {
       .catch((e) => setEstimateError(String(e.message || e)));
   }, [folder, aemAuthorUrl]);
 
+  useEffect(() => {
+    if (status !== 'started' || !result || !result.jobId) return undefined;
+    const url = resolveActionUrl('generate-idapi-banners-status');
+    if (!url) {
+      setError(`Job ${result.jobId} started, but the status action URL is not configured. Check the output folder or query the status action manually.`);
+      return undefined;
+    }
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await actionWebInvoke(url, {}, { jobId: result.jobId });
+        const body = res && res.body ? res.body : res;
+        if (res && (res.error || (res.statusCode && res.statusCode >= 400))) {
+          throw new Error(res.error || `status action returned ${res.statusCode}`);
+        }
+        if (cancelled) return;
+        if (body.status === 'completed') {
+          setResult(body);
+          setStatus('done');
+        } else if (body.status === 'failed') {
+          setError(`Job ${body.jobId} failed: ${body.error || 'The worker reported a failure.'}`);
+          setResult(body);
+          setStatus('error');
+        }
+      } catch (e) {
+        if (!cancelled) setError(`Job ${result.jobId} started, but status could not be checked: ${String(e.message || e)}`);
+      }
+    };
+    check();
+    const timer = setInterval(check, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [status, result]);
+
   const close = () => guestConnection && guestConnection.host.modal.closeDialog();
 
   async function generate(writeIndd = false) {
@@ -83,7 +122,11 @@ export default function ModalIndesignBannersGeneration() {
       call,
       new Promise((res) => setTimeout(() => res({ started: true }), 6000)),
     ]);
-    if (outcome.started) { setStatus('started'); return; }
+    if (outcome.started) {
+      setResult({ jobId: await deterministicJobId(folder, writeIndd) });
+      setStatus('started');
+      return;
+    }
     if (outcome.err) { setError(String((outcome.err && outcome.err.message) || outcome.err)); setStatus('error'); return; }
     const res = outcome.r;
     if (res && (res.error || (res.statusCode && res.statusCode >= 400))) { setError(res.error || ('action returned ' + res.statusCode)); setStatus('error'); return; }
@@ -160,7 +203,23 @@ export default function ModalIndesignBannersGeneration() {
               <b> {folder}/output</b> in a few minutes — unpublished, ready for your review.
               You can close this dialog; the job keeps running in the background.
             </Text>
-            {result && result.jobId && <Text>Job ID: <code>{result.jobId}</code></Text>}
+            {result && result.jobId && (
+              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+                <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
+                <Text>Status is checked automatically. If the job fails, this ID and the error can be used to diagnose or retry it.</Text>
+                {error && <Text><b>Diagnostic warning:</b> {error}</Text>}
+              </View>
+            )}
+            <ButtonGroup><Button variant="accent" onPress={close}>Close</Button></ButtonGroup>
+          </Flex>
+        )}
+
+        {status === 'error' && (
+          <Flex direction="column" gap="size-150">
+            <Heading level={3}>Generation failed</Heading>
+            <Text>{error}</Text>
+            {result && result.jobId && <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>}
+            <Text>Check the job manifest in <b>{folder}/output/_idapi-job.json</b>, then retry after correcting the reported issue.</Text>
             <ButtonGroup><Button variant="accent" onPress={close}>Close</Button></ButtonGroup>
           </Flex>
         )}

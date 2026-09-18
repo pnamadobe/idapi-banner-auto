@@ -210,6 +210,21 @@ The engine reads + classifies the folder, stages inputs to Adobe I/O Files, exec
 the InDesign API, and writes outputs back to `<folder>/output` **unpublished**.
 Confirm they appear in AEM, then drop `--max-rows` for the full set.
 
+### Monitoring and failed uploads
+
+The Assets View modal displays a Job ID immediately after starting a render and
+checks the durable job status while the modal remains open. Record the Job ID
+for support and diagnostics. The job also writes `_idapi-job.json` to the
+`output/` folder with its status, progress, output names, and any error.
+
+Each worker mints a fresh AEM token from `AEM_SC_JSON`. After every
+`completeUpload`, the action verifies that the asset is readable at its final
+DAM path before recording the filename in job state. If the upload cannot be
+verified, the batch is marked failed and the error is written to durable state
+and the manifest; it does not report an output that is missing from AEM.
+Retrying a failed job starts a new worker with a fresh token and preserves
+already verified outputs.
+
 ### InDesign template contract
 
 The `.indd` must contain one InDesign **page** for each output artboard/placement.

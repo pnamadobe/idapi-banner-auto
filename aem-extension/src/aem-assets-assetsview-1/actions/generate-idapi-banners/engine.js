@@ -57,6 +57,19 @@ async function aemDownload (author, token, damPath) {
   return Buffer.from(await res.arrayBuffer())
 }
 // AEM as a Cloud Service direct-binary upload: initiate -> bare block PUT -> complete.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+async function verifyAemAsset (author, token, damPath) {
+  const url = `${author}${damPath.split('/').map(encodeURIComponent).join('/')}`
+  const delays = [1000, 2000, 4000, 8000, 15000]
+  let lastStatus = 0
+  for (let i = 0; i <= delays.length; i++) {
+    const res = await fetch(url, { method: 'HEAD', headers: { Authorization: `Bearer ${token}` } })
+    lastStatus = res.status
+    if (res.ok) return
+    if (i < delays.length) await sleep(delays[i])
+  }
+  throw new Error(`AEM asset ${damPath} was not readable after upload (last status ${lastStatus})`)
+}
 async function aemUpload (author, token, folderDamPath, name, buf, mime) {
   const ir = await fetch(`${author}${folderDamPath}.initiateUpload.json`, {
     method: 'POST',
@@ -78,6 +91,7 @@ async function aemUpload (author, token, folderDamPath, name, buf, mime) {
     body: new URLSearchParams({ fileName: name, mimeType: mime || f.mimeType || 'application/octet-stream', uploadToken: f.uploadToken, fileSize: String(buf.length) })
   })
   if (!cr.ok) throw new Error(`completeUpload ${name} -> ${cr.status}`)
+  await verifyAemAsset(author, token, `${folderDamPath}/${name}`)
 }
 
 // ---- classification (folder-as-key contract) ----
@@ -292,10 +306,6 @@ async function processBatch (params, job, state) {
       const buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
       await aemUpload(author, aemToken, outFolder, name, buf, mimeOf(name))
       written.push(name)
-      if (state && job) {
-        job.outputs = Array.from(new Set([...(job.outputs || []), name]))
-        await state.put(job.stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
-      }
     }
 
     // 6. tidy up the staged inputs — the render is done and outputs are in AEM.

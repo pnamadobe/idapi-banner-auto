@@ -29,6 +29,13 @@ The Generate Banners action is a durable job launcher, not a blocking render req
 
 `generate-idapi-banners-status` returns durable status by `jobId`. Output names are tracked in state and skipped on retries, so a worker retry does not upload the same output again. Configure `AEM_SC_JSON` (recommended) or `AEM_DEV_TOKEN`; caller browser tokens are not persisted in job state.
 
+After each AEM upload completes, the action verifies that the asset is readable
+at its final DAM path before recording the filename in durable state. If the
+asset never becomes readable, the batch is marked failed instead of reporting
+an output that is missing from the folder. Each worker mints a fresh AEM token
+from `AEM_SC_JSON`; retrying a failed batch starts a new worker with a fresh
+token and preserves already verified outputs.
+
 Each job also writes `_idapi-job.json` into the AEM `output/` folder after
 starting and after every batch. It contains the job ID, status, row progress,
 output count, timestamps, and any failure message, so diagnostics do not depend
