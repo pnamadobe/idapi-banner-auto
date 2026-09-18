@@ -205,8 +205,10 @@ export default function ModalIndesignBannersGeneration() {
             </Text>
             {result && result.jobId && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
-                <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
-                <Text>Status is checked automatically. If the job fails, this ID and the error can be used to diagnose or retry it.</Text>
+                <Flex direction="column" gap="size-100">
+                  <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
+                  <Text>Status is checked automatically. If the job fails, this ID and the error can be used to diagnose or retry it.</Text>
+                </Flex>
                 {error && <Text><b>Diagnostic warning:</b> {error}</Text>}
               </View>
             )}
