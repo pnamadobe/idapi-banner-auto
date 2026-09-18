@@ -87,12 +87,11 @@ export default function ModalIndesignBannersGeneration() {
           throw new Error(res.error || `status action returned ${res.statusCode}`);
         }
         if (cancelled) return;
+        setResult(body);
         if (body.status === 'completed') {
-          setResult(body);
           setStatus('done');
         } else if (body.status === 'failed') {
           setError(`Job ${body.jobId} failed: ${body.error || 'The worker reported a failure.'}`);
-          setResult(body);
           setStatus('error');
         }
       } catch (e) {
@@ -203,6 +202,14 @@ export default function ModalIndesignBannersGeneration() {
               <b> {folder}/output</b> in a few minutes — unpublished, ready for your review.
               You can close this dialog; the job keeps running in the background.
             </Text>
+            {result && (
+              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+                <Flex direction="column" gap="size-100">
+                  <Text><b>Status:</b> {result.status || 'queued'}</Text>
+                  <Text><b>Verified outputs:</b> {result.count || 0}</Text>
+                </Flex>
+              </View>
+            )}
             {result && result.jobId && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
                 <Flex direction="column" gap="size-100">
