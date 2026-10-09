@@ -143,34 +143,53 @@
             if (tf.overflows) warn.push(pageName + " '" + role + "' OVERSET (text too long)");
         }
 
+        // The Script Label may sit on the placed graphic itself (brand template: label
+        // "hero" is on the Image, its crop frame is "hero-frame") or on a frame that
+        // contains a graphic (United template). Resolve to {graphic, frame} either way.
+        function resolveImageTarget(item) {
+            var isGraphic = false;
+            try { isGraphic = (item.itemLink !== undefined && item.itemLink !== null); } catch (e) {}
+            if (isGraphic) return { graphic: item, frame: item.parent };
+            var g = null;
+            try { if (item.graphics && item.graphics.length > 0) g = item.graphics[0]; } catch (e) {}
+            return { graphic: g, frame: item };
+        }
+
         function setImage(pg, pageName, role, imageName) {
             if (!imageName) return;
             var f = U.shot(imageName);
             if (!f.exists) { warn.push(pageName + ": " + role + " image missing '" + imageName + "'"); return; }
-            var frame = U.findByLabel(pg, role);
-            if (!frame) { warn.push(pageName + ": no '" + role + "' frame"); return; }
-            if (frame.graphics.length > 0) {
+            var item = U.findByLabel(pg, role);
+            if (!item) { warn.push(pageName + ": no '" + role + "' frame"); return; }
+            var t = resolveImageTarget(item);
+            if (t.graphic) {
                 // relink() alone repoints the link AND redraws the new pixels;
                 // the extra update() is redundant and forces a full asset reload
                 // (which re-runs Content-Credential/CAI verification per image).
-                frame.graphics[0].itemLink.relink(f);
+                t.graphic.itemLink.relink(f);
             } else {
-                frame.place(f);
+                t.frame.place(f);
             }
-            frame.fit(FitOptions.FILL_PROPORTIONALLY);
-            frame.fit(FitOptions.CENTER_CONTENT);
+            t.frame.fit(FitOptions.FILL_PROPORTIONALLY);
+            t.frame.fit(FitOptions.CENTER_CONTENT);
+            // relink() to a different file drops the Script Label from the graphic.
+            // When the label lives on the image (brand template), re-apply it or the
+            // next CSV row can't find the swappable image.
+            if (item !== t.frame) {
+                try { if (t.frame.graphics.length > 0) t.frame.graphics[0].label = role; } catch (e) {}
+            }
         }
 
         function setField(pg, pageName, role, value) {
             if (value === undefined || value === null || value === "") return;
             var frame = U.findByLabel(pg, role);
             if (!frame) { warn.push(pageName + ": no '" + role + "' frame"); return; }
-            if (frame.graphics && frame.graphics.length >= 0) {
-                var image = U.shot(value);
-                if (image.exists) {
-                    setImage(pg, pageName, role, value);
-                    return;
-                }
+            // A value that names an existing image file swaps the picture; anything
+            // else is treated as text for a text frame.
+            var image = U.shot(value);
+            if (image.exists) {
+                setImage(pg, pageName, role, value);
+                return;
             }
             setText(pg, pageName, role, value);
         }
