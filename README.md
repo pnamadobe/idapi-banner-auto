@@ -238,6 +238,22 @@ Opening the file:
   reason is logged and returned as `remapWarnings`.
 - JPG outputs are unaffected.
 
+### Relations in AEM
+
+Assets View shows only explicit asset **relations**, not the automatic Asset Link
+references, so after the INDDs are uploaded the job creates them through the AEM
+Assets Author API (`/adobe/assets/{id}/relations`):
+
+- **Template → INDD:** each generated INDD is a *derived* asset of the job's template,
+  so the INDD's Asset Relations panel shows the template as its source.
+- **INDD ↔ images:** each INDD and the source images it links (the swapped images and
+  other staged art such as the lockup) are related as *Other*, in both directions.
+
+Existing relations are skipped, so reruns that overwrite the same output names are
+safe. If the relation calls fail (for example the AEM credential isn't allowed to use
+the Assets Author API), the job still succeeds and the reason is returned as
+`relationWarnings`; the response also reports `relationsCreated`.
+
 ---
 
 ## Set up your own environment

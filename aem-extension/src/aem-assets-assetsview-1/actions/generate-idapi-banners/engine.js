@@ -13,6 +13,7 @@
 const crypto = require('crypto')
 const filesLib = require('@adobe/aio-lib-files')
 const { Core } = require('@adobe/aio-sdk')
+const { planRelations, assetId, applyPlan } = require('./relations')
 const { isDeliverable } = require('../job-utils')
 const { remapSources, linksFromIndd } = require('./remap')
 const { damLinksFromTemplate, csvImageRefs, resolveSwappedImages } = require('./links')
@@ -357,6 +358,7 @@ async function processBatch (params, job, state) {
     logger.info(`writing ${outputs.length} outputs to ${outFolder}`)
     const written = []
     const remapWarnings = []
+    const inddRecords = []   // { name, imageNames } for relations
     // result.json (from the script) records each saved INDD's local image links.
     let linkMap = {}
     const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
@@ -371,6 +373,7 @@ async function processBatch (params, job, state) {
         // local staged copies. A failed remap keeps the unremapped INDD rather than the job.
         // Read the link paths from the INDD itself (authoritative); fall back to the script's record.
         const dataSource = remapSources([...linksFromIndd(buf), ...(linkMap[name] || [])], aemSource, author)
+        inddRecords.push({ name, imageNames: [...new Set([...linksFromIndd(buf), ...(linkMap[name] || [])].map((l) => l.name).filter((n) => aemSource.has(n)))] })
         logger.info(`remap ${name}: ${dataSource.length} mapping(s); script recorded ${(linkMap[name] || []).length} link(s)`)
         if (dataSource.length) {
           try {
@@ -387,6 +390,28 @@ async function processBatch (params, job, state) {
       }
       await aemUpload(author, aemToken, outFolder, name, buf, mimeOf(name))
       written.push(name)
+    }
+    // 5b. AEM relations (Assets View shows these, not the automatic Asset Link references):
+    // template -> INDD (derived) and INDD <-> its source images (other). Failures only warn.
+    let relationsCreated = 0
+    const relationWarnings = []
+    if (inddRecords.length) {
+      try {
+        const templateId = await assetId(author, aemToken, `${folder}/${c.template.name}`)
+        const ids = new Map()
+        const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
+        const records = []
+        for (const r of inddRecords) {
+          records.push({ inddId: await idOf(`${outFolder}/${r.name}`), imageIds: await Promise.all(r.imageNames.map((n) => idOf(aemSource.get(n)))) })
+        }
+        const res = await applyPlan(author, aemToken, planRelations(templateId, records))
+        relationsCreated = res.created
+        relationWarnings.push(...res.warnings)
+      } catch (e) {
+        relationWarnings.push(e.message)
+      }
+      if (relationWarnings.length) logger.warn(`relation warnings: ${relationWarnings.join(' | ')}`)
+      logger.info(`relations created: ${relationsCreated}`)
     }
     if (remapWarnings.length) logger.warn(`remap warnings: ${remapWarnings.join(' | ')}`)
 
@@ -412,6 +437,8 @@ async function processBatch (params, job, state) {
         count: written.filter(isDeliverable).length,
         batchRows: varText.trim() ? Math.max(0, varText.trim().split(/\r?\n/).length - 1) : 0,
         remapWarnings,
+        relationsCreated,
+        relationWarnings,
         outputs: written
       }
     }
