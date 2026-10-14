@@ -19,7 +19,7 @@
 // @include "brand_lib.jsx"
 
 (function () {
-    var log = [], warn = [], written = 0, inddWritten = 0, outFiles = [];
+    var log = [], warn = [], written = 0, inddWritten = 0, outFiles = [], linkMaps = [];
     // InDesign API return contract: the capability must return a JSON *string*;
     // outputs are declared as workingFolder-relative paths in assetsToBeUploaded.
     // Escape for JSON: backslash + quote AND control chars. InDesign Font.name is
@@ -49,6 +49,22 @@
         try { if ($.global.BRAND_TEMPLATE) { var otpl = new File(String($.global.BRAND_TEMPLATE)); if (otpl.exists) tpl = otpl; } } catch (e) {}
         if (!tpl.exists) return failurePkg("template not found: " + tpl.fsName + " (root=" + U.root + ")");
         doc = app.open(tpl); // server has no window arg; we never save the template
+
+        // Relink any link that points at a path this machine doesn't have (e.g. the
+        // brand lockup placed from a designer's local drive) to the staged copy of the
+        // same filename: assets/shots/<name>, else assets/brand/<name>. Swapped heroes
+        // are relinked again per CSV row; this only guarantees static art resolves.
+        var relinked = 0;
+        try {
+            for (var mi = 0; mi < doc.links.length; mi++) {
+                var ml = doc.links[mi];
+                if (ml.status !== LinkStatus.LINK_MISSING) continue;
+                var cand = U.shot(ml.name);
+                if (!cand.exists) cand = new File(U.root + "/" + U.CONFIG.brandRel + "/" + ml.name);
+                if (cand.exists) { ml.relink(cand); relinked++; }
+                else warn.push("link still missing: " + ml.name);
+            }
+        } catch (eRel) { warn.push("link preflight: " + eRel.message); }
 
         // Font preflight: the cloud render box only has the fonts we ship with the
         // job (staged into a "Document Fonts/" folder next to the template). Ask
@@ -235,6 +251,16 @@
             // saveACopy writes a copy WITHOUT changing the in-memory template's path,
             // so the next row simply overwrites these pages and dumps another copy.
             if (writeIndd) {
+                // Record where each swapped image's link points in this row's saved copy,
+                // so the orchestrator can remap those local links back to AEM URLs.
+                var rowLinks = [];
+                try {
+                    for (var li = 0; li < doc.links.length; li++) {
+                        var lk = doc.links[li], lp = String(lk.filePath).replace(/\\+/g, "/");
+                        if (lp.indexOf("/" + U.CONFIG.shotsRel + "/") >= 0 || lp.indexOf("/" + U.CONFIG.brandRel + "/") >= 0) rowLinks.push('{"name":' + jesc(lk.name) + ',"path":' + jesc(lp) + '}');
+                    }
+                } catch (eL) {}
+                linkMaps.push(jesc(stem + ".indd") + ':[' + rowLinks.join(",") + ']');
                 doc.saveACopy(new File(outDir.fsName + "/" + stem + ".indd"));
                 inddWritten++; outFiles.push(U.CONFIG.outputRel + "/" + stem + ".indd");
             }
@@ -247,7 +273,7 @@
         var fontLines = [];
         for (var fj = 0; fj < fontReport.length; fj++) fontLines.push(fontReport[fj].name + " [" + fontReport[fj].label + "]");
         lf.write("rows: " + csv.rows.length + "\nformat: " + fmt + "\npagemap: " + pmName +
-                 "\nimages written: " + written + "\nindd written: " + inddWritten +
+                 "\nlinks relinked at open: " + relinked + "\nimages written: " + written + "\nindd written: " + inddWritten +
                  "\n\nfonts (" + fontReport.length + "):\n" + (fontLines.length ? fontLines.join("\n") : "none") +
                  "\n\nrows: " + log.join(", ") +
                  "\n\nwarnings (" + warn.length + "):\n" + (warn.length ? warn.join("\n") : "none") + "\n");
@@ -262,7 +288,7 @@
         rf.encoding = "UTF-8"; rf.open("w");
         var fontsJson = [];
         for (var fk = 0; fk < fontReport.length; fk++) fontsJson.push('{"name":' + jesc(fontReport[fk].name) + ',"status":' + jesc(fontReport[fk].label) + '}');
-        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + ']}');
+        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + '],"links":{' + linkMaps.join(",") + '}}');
         rf.close();
         return successPkg(outFiles, resultRel);
     } catch (e) {

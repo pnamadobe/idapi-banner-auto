@@ -196,7 +196,7 @@ In AEM Assets, create a folder (this is the "key") containing:
 | InDesign template | filename contains **`template`**, ends `.indd` |
 | Variations CSV | a `.csv` with a reserved `outputFileName` column plus content columns |
 | Pagemap CSV | filename contains **`pagemap`** (`pagenumber,pagename`) |
-| Hero images | the `.jpg/.png` referenced by the variations CSV |
+| Hero images | the `.jpg/.png` referenced by the variations CSV — in the folder, or AEM-linked (Asset Link) in the template. Editable INDDs link them back to AEM; see the README |
 | `fonts/` *(optional)* | per-job font files (`.otf/.ttf/.ttc/.woff2`) — override the shared set for this job |
 | `output/` | an empty subfolder for results |
 

@@ -15,12 +15,10 @@
  *
  */
 function stringParameters (params) {
-  // hide authorization token without overriding params
-  let headers = params.__ow_headers || {}
-  if (headers.authorization) {
-    headers = { ...headers, authorization: '<hidden>' }
-  }
-  return JSON.stringify({ ...params, __ow_headers: headers })
+  // Never log credentials: redact anything that looks like a secret, token or key.
+  const secretKey = /secret|token|password|credential|private|_sc_json|api_?key|authorization/i
+  const redact = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, secretKey.test(k) ? '<hidden>' : v]))
+  return JSON.stringify({ ...redact(params), __ow_headers: redact(params.__ow_headers || {}) })
 }
 
 /**

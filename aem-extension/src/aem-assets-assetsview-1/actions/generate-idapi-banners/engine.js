@@ -13,6 +13,9 @@
 const crypto = require('crypto')
 const filesLib = require('@adobe/aio-lib-files')
 const { Core } = require('@adobe/aio-sdk')
+const { isDeliverable } = require('../job-utils')
+const { remapSources, linksFromIndd } = require('./remap')
+const { damLinksFromTemplate, csvImageRefs, resolveSwappedImages } = require('./links')
 const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
 
 // Mint a fresh AEM token from an AEM Service Credential (JWT flow). The whole
@@ -122,6 +125,15 @@ function csvRecords (text) {
   if (record.trim()) records.push(record)
   return records
 }
+// Swapped images may live in the job folder OR be AEM-linked (Asset Link) in the
+// template; fetch whatever the CSV rows reference. Throws if any can't be found.
+async function resolveImages (author, folder, c, templateBuf, csvText) {
+  const { host } = new URL(author)
+  const { fromLinks, unresolved } = resolveSwappedImages(
+    csvImageRefs(csvRecords(csvText)), c.images.map((i) => i.name), damLinksFromTemplate(templateBuf), host)
+  if (unresolved.length) throw new Error(`image(s) referenced by the CSV were not found in ${folder} or the template's AEM links: ${unresolved.join(', ')}`)
+  return { fromLinks }
+}
 async function aemContext (params) {
   let aemToken
   if (params.AEM_SC_JSON) aemToken = await aemTokenFromServiceCredential(params.AEM_SC_JSON)
@@ -140,10 +152,12 @@ async function inspectInputs (params) {
   const { author, aemToken } = await aemContext(params)
   const entries = await aemList(author, aemToken, params.folder)
   const c = classify(entries)
-  const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k]).concat(c.images.length ? [] : ['images'])
+  const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k])
   if (missing.length) throw new Error(`folder is missing required input(s): ${missing.join(', ')}`)
+  const templateBuf = await aemDownload(author, aemToken, `${params.folder}/${c.template.name}`)
   const variationsText = (await aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`)).toString('utf8')
   const pagemapText = (await aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)).toString('utf8')
+  await resolveImages(author, params.folder, c, templateBuf, variationsText)
   const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
   const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
   return { variationRows, pageCount, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name }
@@ -218,7 +232,9 @@ async function indesignRender (p, tok, assets, renderParams) {
   const er = await fetch(p.INDESIGN_EXECUTE_URL, { method: 'POST', headers: { ...idH(p, tok), 'Content-Type': 'application/json' }, body: JSON.stringify({ assets, params: renderParams || {} }) })
   const et = await er.text()
   if (er.status !== 202) throw new Error(`execute ${er.status} ${et}`)
-  const statusUrl = JSON.parse(et).statusUrl
+  return (await indesignPoll(p, tok, JSON.parse(et).statusUrl)).outputs
+}
+async function indesignPoll (p, tok, statusUrl) {
   for (let n = 0; n < 200; n++) {
     await new Promise((r) => setTimeout(r, 4000))
     const s = await (await fetch(statusUrl, { headers: idH(p, tok) })).json()
@@ -230,11 +246,45 @@ async function indesignRender (p, tok, assets, renderParams) {
         const next = page.paging && page.paging.nextUrl; if (!next) break
         page = await (await fetch(next, { headers: idH(p, tok) })).json()
       }
-      return out
+      return { outputs: out, status: s }
     }
     if (['failed', 'error', 'cancelled'].includes(st)) throw new Error(`render ${st}: ${JSON.stringify(s.errors || s)}`)
   }
   throw new Error('render poll timeout')
+}
+// Remap an output INDD's local image links to AEM URLs (POST /v3/remap-links).
+// Returns { buf, warnings }. targetDocument's documented shape is a string; the
+// service has also been seen demanding an array, so retry once on that schema error.
+async function remapLinks (p, tok, aemToken, files, prefix, name, buf, dataSource) {
+  const remote = `${prefix}/remap/${name}`
+  await files.write(remote, buf)
+  const url = await files.generatePresignURL(remote, { expiryInSeconds: 3600, permissions: 'r' })
+  const endpoint = `${new URL(p.INDESIGN_EXECUTE_URL).origin}/v3/remap-links`
+  // targetDocument's shape isn't consistently documented: the service has asked for an
+  // array (validation error from the job) and, elsewhere, a string. Try array first,
+  // then fall back to string if the failure says that's the problem.
+  const run = async (targetDocument) => {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: { ...idH(p, tok), 'x-aem-token': aemToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assets: [{ source: { url }, destination: name }], params: { targetDocument, dataSource } })
+    })
+    const text = await r.text()
+    if (r.status !== 202) throw new Error(`remap-links ${r.status} ${text}`)
+    return indesignPoll(p, tok, JSON.parse(text).statusUrl)
+  }
+  let result
+  try {
+    result = await run([name])
+  } catch (e) {
+    if (!/targetDocument/i.test(e.message) || !/expected type: String|expected string/i.test(e.message)) throw e
+    result = await run(name)
+  }
+  const { outputs, status } = result
+  const out = outputs.find((o) => /\.indd$/i.test(String(o.src || o.url).split('?')[0])) || outputs[0]
+  if (!out) throw new Error('remap-links returned no output')
+  const warnings = (status.remapWarnings || (status.data && status.data.remapWarnings) || []).map((w) => w.message || JSON.stringify(w))
+  return { buf: Buffer.from(await (await fetch(out.url)).arrayBuffer()), warnings }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,17 +306,24 @@ async function processBatch (params, job, state) {
     logger.info(`reading AEM folder ${folder}`)
     const entries = await aemList(author, aemToken, folder)
     const c = classify(entries)
-    const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k]).concat(c.images.length ? [] : ['images'])
+    const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k])
     if (missing.length) return errorResponse(400, `folder is missing required input(s): ${missing.join(', ')}`, logger)
 
     // 2. pull inputs → buffers, mapped to render destinations
     const staged = []
-    staged.push({ dest: destFor('template'), buf: await aemDownload(author, aemToken, folder + '/' + c.template.name) })
+    const templateBuf = await aemDownload(author, aemToken, folder + '/' + c.template.name)
+    staged.push({ dest: destFor('template'), buf: templateBuf })
     let varText = (await aemDownload(author, aemToken, folder + '/' + c.variations.name)).toString('utf8')
     if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
     staged.push({ dest: destFor('variations'), buf: Buffer.from(varText, 'utf8') })
     staged.push({ dest: destFor('pagemap'), buf: await aemDownload(author, aemToken, folder + '/' + c.pagemap.name) })
+    // swapped images: job-folder images plus those AEM-linked in the template that the CSV references
+    const { fromLinks } = await resolveImages(author, folder, c, templateBuf, varText)
+    const aemSource = new Map(c.images.map((im) => [im.name, `${folder}/${im.name}`]))
+    fromLinks.forEach((l) => aemSource.set(l.name, l.damPath))
     for (const im of c.images) staged.push({ dest: destFor('image', im.name), buf: await aemDownload(author, aemToken, folder + '/' + im.name) })
+    for (const l of fromLinks) staged.push({ dest: destFor('image', l.name), buf: await aemDownload(author, aemToken, l.damPath) })
+    logger.info(`swapped images: ${c.images.length} from folder, ${fromLinks.length} from template Asset Links`)
 
     // 2b. fonts: the render box only has what we ship. Gather from a shared org
     // fonts folder (AEM_FONTS_PATH, default /content/dam/fonts) plus an optional
@@ -299,14 +356,39 @@ async function processBatch (params, job, state) {
     const outFolder = folder + '/output'
     logger.info(`writing ${outputs.length} outputs to ${outFolder}`)
     const written = []
+    const remapWarnings = []
+    // result.json (from the script) records each saved INDD's local image links.
+    let linkMap = {}
+    const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
+    if (rj) { try { linkMap = (await (await fetch(rj.url)).json()).links || {} } catch (e) { logger.warn(`result.json unreadable: ${e.message}`) } }
     for (const o of outputs) {
       const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
       if (name === 'result.json') continue
       if (job && (job.outputs || []).includes(name)) continue
-      const buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
+      let buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
+      if (/\.indd$/i.test(name)) {
+        // Restore AEM Asset Link references: the render left swapped images linked to
+        // local staged copies. A failed remap keeps the unremapped INDD rather than the job.
+        // Read the link paths from the INDD itself (authoritative); fall back to the script's record.
+        const dataSource = remapSources([...linksFromIndd(buf), ...(linkMap[name] || [])], aemSource, author)
+        logger.info(`remap ${name}: ${dataSource.length} mapping(s); script recorded ${(linkMap[name] || []).length} link(s)`)
+        if (dataSource.length) {
+          try {
+            const r = await remapLinks(params, idTok, aemToken, files, prefix, name, buf, dataSource)
+            buf = r.buf
+            r.warnings.forEach((w) => remapWarnings.push(`${name}: ${w}`))
+          } catch (e) {
+            logger.warn(`remap-links failed for ${name}: ${e.message}`)
+            remapWarnings.push(`${name}: remap failed (${e.message.slice(0, 200)}); INDD keeps local links`)
+          }
+        } else {
+          remapWarnings.push(`${name}: no swapped-image links recorded; INDD keeps local links`)
+        }
+      }
       await aemUpload(author, aemToken, outFolder, name, buf, mimeOf(name))
       written.push(name)
     }
+    if (remapWarnings.length) logger.warn(`remap warnings: ${remapWarnings.join(' | ')}`)
 
     // 6. tidy up the staged inputs — the render is done and outputs are in AEM.
     try { await files.delete(`${prefix}/`) } catch (e) { logger.warn(`staging cleanup failed: ${e.message}`) }
@@ -327,8 +409,9 @@ async function processBatch (params, job, state) {
         template: c.template.name,
         variations: c.variations.name,
         fonts: fontByName.size,
-        count: written.length,
+        count: written.filter(isDeliverable).length,
         batchRows: varText.trim() ? Math.max(0, varText.trim().split(/\r?\n/).length - 1) : 0,
+        remapWarnings,
         outputs: written
       }
     }

@@ -11,3 +11,7 @@ test('public status does not expose orchestration state', () => {
     .toEqual(expect.objectContaining({ jobId: 'abc', status: 'running', count: 1 }))
   expect(publicJob({ secret: 'nope' })).not.toHaveProperty('secret')
 })
+
+test('count only includes banner deliverables, not the run log', () => {
+  expect(publicJob({ outputs: ['a.jpg', 'b.PNG', 'c.indd', '_run_log.txt'] }).count).toBe(3)
+})

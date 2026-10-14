@@ -94,7 +94,9 @@ sizes, that distinction is decisive.
 - **Preflight for automated QA.** InDesign can validate a layout — missing fonts,
   overset text, low-resolution links — giving the pipeline built-in quality checks.
 - **A truly editable deliverable.** The output `.indd` is a structured layout a
-  designer can reopen and refine, not a flattened image.
+  designer can reopen and refine, not a flattened image — and its swapped images
+  are live [AEM Asset Link](#editable-indds-keep-aem-asset-link-references)
+  references back to the source assets in AEM.
 
 > **In short:** Photoshop paints pixels; InDesign composes pages — and a banner is
 > a page.
@@ -205,6 +207,36 @@ your-campaign/
 
 Drop in the ingredients, run one command (or, soon, click one button) — collect
 the results.
+
+### Editable INDDs keep AEM Asset Link references
+
+When you choose **+ editable InDesign**, each generated `.indd` links its swapped
+images back to the source assets in AEM — the same **Adobe Asset Link** placed
+links a designer gets by placing from AEM — not to temporary files from the render.
+
+How it works:
+
+1. **Swapped images come from AEM.** An image the CSV names is taken from the job
+   folder, or — if it isn't there — from the template's own AEM Asset Link
+   references (matched by filename, same AEM author host only).
+2. **Render.** The InDesign API downloads those images as local copies, so the
+   render itself works.
+3. **Remap.** After the render, each saved `.indd` is passed to the InDesign
+   **Remap Links** API, which rewrites the local links to
+   `aems://<author-host>/content/dam/...`, the form Asset Link writes. The remapped
+   INDD is what lands in `output/`.
+
+Opening the file:
+
+- The links resolve in InDesign when the **Adobe Asset Link** panel is signed in to
+  the same AEM environment. Without it, InDesign reports them as missing links.
+- Only the images the CSV swaps are remapped. Other links keep whatever the template
+  had (for example a local logo path, which resolves only on the machine that has it).
+- Missing links are relinked at open by filename, if that file is in the job folder,
+  so cloud renders still show static art such as a lockup.
+- If a remap fails, the job still succeeds and that `.indd` keeps local links; the
+  reason is logged and returned as `remapWarnings`.
+- JPG outputs are unaffected.
 
 ---
 

@@ -71,17 +71,20 @@ export default function ModalIndesignBannersGeneration() {
       .catch((e) => setEstimateError(String(e.message || e)));
   }, [folder, aemAuthorUrl]);
 
+  // Key on the job id, not the result object: each poll replaces `result`, which would
+  // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
+  const jobId = result && result.jobId;
   useEffect(() => {
-    if (status !== 'started' || !result || !result.jobId) return undefined;
+    if (status !== 'started' || !jobId) return undefined;
     const url = resolveActionUrl('generate-idapi-banners-status');
     if (!url) {
-      setError(`Job ${result.jobId} started, but the status action URL is not configured. Check the output folder or query the status action manually.`);
+      setError(`Job ${jobId} started, but the status action URL is not configured. Check the output folder or query the status action manually.`);
       return undefined;
     }
     let cancelled = false;
     const check = async () => {
       try {
-        const res = await actionWebInvoke(url, {}, { jobId: result.jobId });
+        const res = await actionWebInvoke(url, {}, { jobId });
         const body = res && res.body ? res.body : res;
         if (res && (res.error || (res.statusCode && res.statusCode >= 400))) {
           throw new Error(res.error || `status action returned ${res.statusCode}`);
@@ -95,13 +98,13 @@ export default function ModalIndesignBannersGeneration() {
           setStatus('error');
         }
       } catch (e) {
-        if (!cancelled) setError(`Job ${result.jobId} started, but status could not be checked: ${String(e.message || e)}`);
+        if (!cancelled) setError(`Job ${jobId} started, but status could not be checked: ${String(e.message || e)}`);
       }
     };
     check();
     const timer = setInterval(check, 15000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [status, result]);
+  }, [status, jobId]);
 
   const close = () => guestConnection && guestConnection.host.modal.closeDialog();
 
