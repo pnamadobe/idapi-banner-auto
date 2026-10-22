@@ -203,7 +203,7 @@ In AEM Assets, create a folder (this is the "key") containing:
 | Template | filename contains **`template`**, ends `.indd` (InDesign) or `.psd` (Photoshop). With several in one folder, the one you select in Assets View runs |
 | Variations CSV | a `.csv` with a reserved `outputFileName` column plus content columns |
 | Pagemap CSV | filename contains **`pagemap`** (`pagenumber,pagename`) |
-| Hero images | the `.jpg/.png` referenced by the variations CSV — in the folder, or AEM-linked (Asset Link) in the template. Editable INDDs link them back to AEM; see the README |
+| Hero images | the `.jpg/.png` referenced by the variations CSV — in the folder, in subfolders (reference them as `/hero-images/x.jpg` or `components/logos/x.png`, paths from the job folder; a bare name is also found in subfolders if unique), or AEM-linked (Asset Link) in the template. Editable INDDs link them back to AEM; see the README |
 | `fonts/` *(optional)* | per-job font files (`.otf/.ttf/.ttc/.woff2`) — override the shared set for this job |
 | `output/` | an empty subfolder for results |
 

@@ -64,6 +64,16 @@ cover-fitted to an InDesign-style photo frame (`PSD_HERO_FRAME_ASPECT`) with the
 The worker has 2048 MB of memory because PSD templates and editable PSD outputs are large. Transient
 Photoshop API errors are retried. See [`../docs/PSD-DESIGN.md`](../docs/PSD-DESIGN.md).
 
+### Image references
+
+A CSV image cell may be a bare file name, or a path from the job folder (`/hero-images/a.jpg`,
+`components/logos/b.png`). `generate-idapi-banners/images.js` resolves every cell against the job folder
+(root first, then a bounded search of subfolders for bare names; never `output/`, `fonts/` or anything above the
+folder), fails the job with a readable message for missing, ambiguous or out-of-folder references, stages each
+image under one flat name (folder names are folded into the name only when two different files collide), and
+rewrites the CSV cells to those names before the render script sees them. The same resolution runs in the
+preflight, for both INDD and PSD templates; AEM relations and Asset Link remapping point at the real DAM paths.
+
 ### Output folders
 
 `<folder>/output` is used when empty; otherwise each run goes into a datetime-stamped subfolder

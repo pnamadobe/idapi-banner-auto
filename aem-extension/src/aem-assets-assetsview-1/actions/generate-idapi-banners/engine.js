@@ -16,8 +16,9 @@ const { Core } = require('@adobe/aio-sdk')
 const { planRelations, assetId, applyPlan } = require('./relations')
 const { isDeliverable } = require('../job-utils')
 const { remapSources, linksFromIndd } = require('./remap')
-const { damLinksFromTemplate, csvImageRefs, resolveSwappedImages } = require('./links')
+const { damLinksFromTemplate, resolveSwappedImages } = require('./links')
 const psd = require('./psd')
+const images = require('./images')
 const { classify } = require('./classify')
 const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
 
@@ -160,13 +161,32 @@ function csvRecords (text) {
   if (record.trim()) records.push(record)
   return records
 }
-// Swapped images may live in the job folder OR be AEM-linked (Asset Link) in the
-// template; fetch whatever the CSV rows reference. Throws if any can't be found.
-async function resolveImages (author, folder, c, templateBuf, csvText) {
+// Resolve every image the CSV references (job folder, subfolders, or a path from the job folder),
+// throwing a readable error for anything missing, ambiguous or outside the folder. Bare names that
+// are nowhere in the folder are tolerated for INDD templates (their Asset Links may supply them).
+async function planImages (author, token, folder, c, csvText, { allowBareUnresolved = false } = {}) {
+  const plan = await images.resolveImageRefs({
+    folder,
+    rootImages: c.images,
+    cells: images.csvImageCells(csvRecords(csvText)),
+    list: (dir) => aemListSafe(author, token, dir)
+  })
+  const errs = images.problems(plan, folder, { allowBareUnresolved })
+  if (errs.length) throw new Error(errs.join('; '))
+  return plan
+}
+// CSV cells that must be rewritten to the flat staged name of the image they point at.
+const renameMap = (plan) => new Map(plan.resolved.filter((r) => r.staged !== r.ref).map((r) => [r.ref, r.staged]))
+const rewriteCsvText = (text, plan) => {
+  const map = renameMap(plan)
+  return map.size ? images.rewriteRecords(csvRecords(text), map).join('\n') + '\n' : text
+}
+// Swapped images that aren't in the job folder may be AEM-linked (Asset Link) in the INDD template.
+async function resolveImages (author, folder, templateBuf, plan) {
   const { host } = new URL(author)
   const { fromLinks, unresolved } = resolveSwappedImages(
-    csvImageRefs(csvRecords(csvText)), c.images.map((i) => i.name), damLinksFromTemplate(templateBuf), host)
-  if (unresolved.length) throw new Error(`image(s) referenced by the CSV were not found in ${folder} or the template's AEM links: ${unresolved.join(', ')}`)
+    new Set(plan.unresolved.map((u) => u.ref)), [], damLinksFromTemplate(templateBuf), host)
+  if (unresolved.length) throw new Error(`image(s) referenced by the CSV were not found in ${folder}, its subfolders or the template's AEM links: ${unresolved.join(', ')}`)
   return { fromLinks }
 }
 async function aemContext (params) {
@@ -193,11 +213,10 @@ async function inspectInputs (params) {
   const variationsText = (await aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`)).toString('utf8')
   const pagemapText = (await aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)).toString('utf8')
   if (isPsd(c.template.name)) {
-    // PSD layers are filled from images in the job folder only (no Asset Links).
-    const missingImgs = [...csvImageRefs(csvRecords(variationsText))].filter((n) => !c.images.some((i) => i.name === n))
-    if (missingImgs.length) throw new Error(`image(s) referenced by the CSV were not found in ${params.folder}: ${missingImgs.join(', ')}`)
+    // PSD layers are filled from images in the job folder (or its subfolders) only (no Asset Links).
+    await planImages(author, aemToken, params.folder, c, variationsText)
   } else {
-    await resolveImages(author, params.folder, c, templateBuf, variationsText)
+    await resolveImages(author, params.folder, templateBuf, await planImages(author, aemToken, params.folder, c, variationsText, { allowBareUnresolved: true }))
   }
   const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
   const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
@@ -392,13 +411,15 @@ async function renderPsdBatch ({ params, job, state, logger, author, aemToken, f
   let varText = (await aemDownload(author, aemToken, `${folder}/${c.variations.name}`)).toString('utf8')
   if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
   const pagemapText = (await aemDownload(author, aemToken, `${folder}/${c.pagemap.name}`)).toString('utf8')
+  // Images may sit in subfolders and be referenced by path; stage each under one flat name and
+  // point the CSV cells at those names.
+  const plan = await planImages(author, aemToken, folder, c, varText)
+  varText = rewriteCsvText(varText, plan)
   const rows = psd.rowsFromRecords(csvRecords(varText))
-  const refs = csvImageRefs(csvRecords(varText))
-  const missingImgs = [...refs].filter((n) => !c.images.some((i) => i.name === n))
-  if (missingImgs.length) throw new Error(`image(s) referenced by the CSV were not found in ${folder}: ${missingImgs.join(', ')}`)
+  const aemSource = new Map(plan.resolved.map((r) => [r.staged, r.damPath])) // staged name -> DAM path
   const imageDims = new Map()
-  for (const n of refs) {
-    const buf = await aemDownload(author, aemToken, `${folder}/${n}`)
+  for (const [n, damPath] of aemSource) {
+    const buf = await aemDownload(author, aemToken, damPath)
     const size = psd.imageSize(buf)
     if (size) imageDims.set(n, size)
     else logger.warn(`psd: could not read size of ${n}; it will be fitted, not cover-filled`)
@@ -410,7 +431,7 @@ async function renderPsdBatch ({ params, job, state, logger, author, aemToken, f
     for (const e of await aemListSafe(author, aemToken, fp)) if (!e.isFolder && isFont(e.name)) fontByName.set(e.name, fp + '/' + e.name)
   }
   for (const [fname, fpath] of fontByName) staged.push({ dest: destFor('font', fname), buf: await aemDownload(author, aemToken, fpath) })
-  logger.info(`psd: ${rows.length} row(s), ${refs.size} image(s), ${fontByName.size} font(s)`)
+  logger.info(`psd: ${rows.length} row(s), ${aemSource.size} image(s), ${fontByName.size} font(s)`)
 
   const { assets, files, prefix } = await stageInputs(staged)
   staged.length = 0 // everything is in I/O Files now; free the buffers (the PSD alone is ~60 MB)
@@ -466,7 +487,7 @@ async function renderPsdBatch ({ params, job, state, logger, author, aemToken, f
       const ids = new Map()
       const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
       const records = []
-      for (const r of psdRecords) records.push({ inddId: await idOf(`${outFolder}/${r.name}`), imageIds: await Promise.all(r.imageNames.map((n) => idOf(`${folder}/${n}`))) })
+      for (const r of psdRecords) records.push({ inddId: await idOf(`${outFolder}/${r.name}`), imageIds: await Promise.all(r.imageNames.filter((n) => aemSource.has(n)).map((n) => idOf(aemSource.get(n)))) })
       const res = await applyPlan(author, aemToken, planRelations(await idOf(`${folder}/${c.template.name}`), records))
       relationsCreated = res.created
       relationWarnings.push(...res.warnings)
@@ -527,15 +548,22 @@ async function processBatch (params, job, state) {
     staged.push({ dest: destFor('template'), buf: templateBuf })
     let varText = (await aemDownload(author, aemToken, folder + '/' + c.variations.name)).toString('utf8')
     if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
+    // swapped images: job-folder images, images in its subfolders (referenced by path or by name), plus
+    // those AEM-linked in the template that the CSV references. Each is staged under one flat name and
+    // the CSV cells are rewritten to those names.
+    const plan = await planImages(author, aemToken, folder, c, varText, { allowBareUnresolved: true })
+    varText = rewriteCsvText(varText, plan)
     staged.push({ dest: destFor('variations'), buf: Buffer.from(varText, 'utf8') })
     staged.push({ dest: destFor('pagemap'), buf: await aemDownload(author, aemToken, folder + '/' + c.pagemap.name) })
-    // swapped images: job-folder images plus those AEM-linked in the template that the CSV references
-    const { fromLinks } = await resolveImages(author, folder, c, templateBuf, varText)
+    const { fromLinks } = await resolveImages(author, folder, templateBuf, plan)
     const aemSource = new Map(c.images.map((im) => [im.name, `${folder}/${im.name}`]))
+    const subfolderImages = new Map(plan.resolved.filter((r) => !aemSource.has(r.staged)).map((r) => [r.staged, r.damPath]))
+    subfolderImages.forEach((damPath, name) => aemSource.set(name, damPath))
     fromLinks.forEach((l) => aemSource.set(l.name, l.damPath))
     for (const im of c.images) staged.push({ dest: destFor('image', im.name), buf: await aemDownload(author, aemToken, folder + '/' + im.name) })
+    for (const [name, damPath] of subfolderImages) staged.push({ dest: destFor('image', name), buf: await aemDownload(author, aemToken, damPath) })
     for (const l of fromLinks) staged.push({ dest: destFor('image', l.name), buf: await aemDownload(author, aemToken, l.damPath) })
-    logger.info(`swapped images: ${c.images.length} from folder, ${fromLinks.length} from template Asset Links`)
+    logger.info(`swapped images: ${c.images.length} from folder, ${subfolderImages.size} from subfolders, ${fromLinks.length} from template Asset Links`)
 
     // 2b. fonts: the render box only has what we ship. Gather from a shared org
     // fonts folder (AEM_FONTS_PATH, default /content/dam/fonts) plus an optional

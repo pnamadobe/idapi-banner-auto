@@ -219,6 +219,21 @@ your-campaign/
 Drop in the ingredients, run one command (or click one button in AEM) — collect
 the results.
 
+**Images can live in subfolders.** Keep the job folder tidy by sorting images into folders
+(`hero-images/`, `components/logos/`, …) and refer to them from the CSV by path, where a leading
+`/` means the job folder itself:
+
+```csv
+outputFileName,headline,hero,logo
+spring-en,Spring is here,/hero-images/meadow.jpg,components/logos/brand.png
+```
+
+A bare name (`meadow.jpg`) still works: it is looked up in the job folder, then by name in its
+subfolders (if two different files share that name, the job stops and asks for a path). References
+cannot leave the job folder, and `output/` and `fonts/` are never searched. This works for both
+InDesign and Photoshop templates; the render sees each image under a flat name, so two files called
+`logo.png` in different folders are both fine.
+
 **Several templates in one folder is fine.** In AEM, the template you *select* is the
 one that runs, whether it is an `.indd` or a `.psd`; each template gets its own job, and
 the button appears only when exactly one template is selected. (From the command line,
