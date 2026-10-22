@@ -19,7 +19,7 @@
 // @include "brand_lib.jsx"
 
 (function () {
-    var log = [], warn = [], written = 0, inddWritten = 0, outFiles = [], linkMaps = [];
+    var log = [], warn = [], written = 0, inddWritten = 0, pdfWritten = 0, outFiles = [], linkMaps = [];
     // InDesign API return contract: the capability must return a JSON *string*;
     // outputs are declared as workingFolder-relative paths in assetsToBeUploaded.
     // Escape for JSON: backslash + quote AND control chars. InDesign Font.name is
@@ -126,6 +126,14 @@
         try {
             var pjW = app.scriptArgs.get("parameters");
             if (pjW) { var mw = pjW.match(/"writeIndd"\s*:\s*(true|false|"[^"]*"|\d+)/i); if (mw) { var wc = String(mw[1]).replace(/"/g, "").toLowerCase(); writeIndd = (wc === "1" || wc === "true" || wc === "yes"); } }
+        } catch (e) {}
+
+        // writePdf (cloud "parameters" arg, like writeIndd): also export each row as one multi-page PDF
+        var writePdf = false;
+        try { if ($.global.BRAND_WRITE_PDF != null) { var pv = String($.global.BRAND_WRITE_PDF).toLowerCase(); writePdf = (pv === "1" || pv === "true" || pv === "yes"); } } catch (e) {}
+        try {
+            var pjP = app.scriptArgs.get("parameters");
+            if (pjP) { var mp = pjP.match(/"writePdf"\s*:\s*(true|false|"[^"]*"|\d+)/i); if (mp) { var pc = String(mp[1]).replace(/"/g, "").toLowerCase(); writePdf = (pc === "1" || pc === "true" || pc === "yes"); } }
         } catch (e) {}
 
         // PNG prefs — lossless, keeps crisp text edges; larger files.
@@ -268,6 +276,20 @@
                 doc.saveACopy(new File(outDir.fsName + "/" + stem + ".indd"));
                 inddWritten++; outFiles.push(U.CONFIG.outputRel + "/" + stem + ".indd");
             }
+            // optional multi-page PDF of the whole row (every page/size), for viewing in AEM Assets.
+            if (writePdf) {
+                try {
+                    var pdfFile = new File(outDir.fsName + "/" + stem + ".pdf");
+                    app.pdfExportPreferences.pageRange = PageRange.ALL_PAGES;
+                    app.pdfExportPreferences.viewPDF = false;
+                    var preset = null;
+                    try { preset = app.pdfExportPresets.itemByName("[Smallest File Size]"); var pn = preset.name; } catch (eS) { preset = null; }
+                    // InDesign Server's exportFile takes the preset as the 3rd argument (no showingOptions flag).
+                    if (preset) { try { doc.exportFile(ExportFormat.PDF_TYPE, pdfFile, preset); } catch (ePre) { doc.exportFile(ExportFormat.PDF_TYPE, pdfFile); } }
+                    else doc.exportFile(ExportFormat.PDF_TYPE, pdfFile);
+                    pdfWritten++; outFiles.push(U.CONFIG.outputRel + "/" + stem + ".pdf");
+                } catch (ePdf) { warn.push("pdf " + stem + ": " + ePdf); }
+            }
             log.push(stem);
         }
 
@@ -277,7 +299,7 @@
         var fontLines = [];
         for (var fj = 0; fj < fontReport.length; fj++) fontLines.push(fontReport[fj].name + " [" + fontReport[fj].label + "]");
         lf.write("rows: " + csv.rows.length + "\nformat: " + fmt + "\npagemap: " + pmName +
-                 "\nlinks relinked at open: " + relinked + "\nimages written: " + written + "\nindd written: " + inddWritten +
+                 "\nlinks relinked at open: " + relinked + "\nimages written: " + written + "\nindd written: " + inddWritten + "\npdf written: " + pdfWritten +
                  "\n\nfonts (" + fontReport.length + "):\n" + (fontLines.length ? fontLines.join("\n") : "none") +
                  "\n\nrows: " + log.join(", ") +
                  "\n\nwarnings (" + warn.length + "):\n" + (warn.length ? warn.join("\n") : "none") + "\n");

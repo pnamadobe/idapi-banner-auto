@@ -74,6 +74,13 @@ image under one flat name (folder names are folded into the name only when two d
 rewrites the CSV cells to those names before the render script sees them. The same resolution runs in the
 preflight, for both INDD and PSD templates; AEM relations and Asset Link remapping point at the real DAM paths.
 
+### INDD PDFs
+
+With the editable option on an InDesign template the script (`writePdf` script parameter, set together with
+`writeIndd`) also exports `<variation>.pdf`, all pages, with the `[Smallest File Size]` preset. The PDF is uploaded
+like any other output and created as a `derived` relation of its `.indd`. Re-register the capability
+(`CAPABILITY_VERSION` bump + `node cloud/run.mjs --register`) after changing the script. PSD jobs don't produce a PDF.
+
 ### INDD previews
 
 Generated `.indd` files carry no embedded page preview (InDesign Server writes none), so AEM would show a

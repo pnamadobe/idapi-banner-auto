@@ -4,6 +4,7 @@
  * "references"), so we create them:
  *   - template  --derived-->  each output INDD   (INDD shows the template as its source)
  *   - INDD  <--other-->  each source image it links (two-way: one call per side)
+ *   - INDD  --derived-->  its multi-page PDF (shown in the INDD's relations)
  * Verified on AEM CS: POST /adobe/assets/{id}/relations {items:[{assetId, relationType}]};
  * a repeated pair returns 400 "already has relation", so existing pairs are skipped.
  */
@@ -21,6 +22,7 @@ function planRelations (templateId, inddRecords) {
   }
   for (const r of inddRecords) {
     if (templateId) add(templateId, r.inddId, 'derived')
+    for (const derivedId of r.derivedIds || []) add(r.inddId, derivedId, 'derived')
     for (const imageId of new Set(r.imageIds)) {
       add(r.inddId, imageId, 'other')
       add(imageId, r.inddId, 'other')
@@ -54,7 +56,12 @@ async function applyPlan (author, token, plan) {
       if (!cur.ok) throw new Error(`get relations -> ${cur.status}`)
       const todo = newItems((await cur.json()).items, items)
       if (!todo.length) continue
-      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ items: todo }) })
+      // AEM answers 5xx ("Error saving ...") when the same asset is being written at the same time; one retry clears it.
+      let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ items: todo }) })
+      for (let attempt = 1; res.status >= 500 && attempt <= 2; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
+        res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ items: todo }) })
+      }
       if (!res.ok) throw new Error(`create relations -> ${res.status} ${(await res.text()).slice(0, 160)}`)
       created += todo.length
     } catch (e) {

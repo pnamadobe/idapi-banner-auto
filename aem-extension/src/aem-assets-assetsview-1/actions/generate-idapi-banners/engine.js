@@ -240,6 +240,7 @@ function mimeOf (name) {
   if (/\.png$/i.test(name)) return 'image/png'
   if (/\.indd$/i.test(name)) return 'application/x-indesign'
   if (/\.psd$/i.test(name)) return 'image/vnd.adobe.photoshop'
+  if (/\.pdf$/i.test(name)) return 'application/pdf'
   if (/\.json$/i.test(name)) return 'application/json'
   if (/\.txt$/i.test(name)) return 'text/plain'
   return 'application/octet-stream'
@@ -593,7 +594,8 @@ async function processBatch (params, job, state) {
     const idTok = await imsToken(params)
     // writeIndd: also emit an editable .indd per variation (the second modal button)
     const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
-    const outputs = await indesignRender(params, idTok, assets, { writeIndd })
+    // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
+    const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd })
 
     // 5. write outputs back to AEM <folder>/output (unpublished → review)
     const outFolder = (job && job.outputFolder) || folder + '/output'
@@ -661,7 +663,13 @@ async function processBatch (params, job, state) {
         const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
         const records = []
         for (const r of inddRecords) {
-          records.push({ inddId: await idOf(`${outFolder}/${r.name}`), imageIds: await Promise.all(r.imageNames.map((n) => idOf(aemSource.get(n)))) })
+          const pdfName = r.name.replace(/\.indd$/i, '.pdf')
+          records.push({
+            inddId: await idOf(`${outFolder}/${r.name}`),
+            imageIds: await Promise.all(r.imageNames.map((n) => idOf(aemSource.get(n)))),
+            // the variation's multi-page PDF, if the render produced one, is derived from the INDD
+            derivedIds: written.includes(pdfName) ? [await idOf(`${outFolder}/${pdfName}`)] : []
+          })
         }
         const res = await applyPlan(author, aemToken, planRelations(templateId, records))
         relationsCreated = res.created

@@ -6,7 +6,7 @@ const keyFor = (folder, writeIndd, template) => `idapi-job-${crypto.createHash('
 // The selected template is a bare file name inside the job folder (it is appended to a DAM path).
 const isTemplateName = (name) => /^[^/\\\x00-\x1f]+\.(indd|psd)$/i.test(String(name || ''))
 // Deliverables only (images + editable INDD); excludes _run_log.txt and similar side files.
-const isDeliverable = (name) => /\.(jpe?g|png|indd|psd)$/i.test(name)
+const isDeliverable = (name) => /\.(jpe?g|png|indd|psd|pdf)$/i.test(name)
 const publicJob = (job) => ({
   jobId: job.jobId,
   folder: job.folder,

@@ -71,3 +71,18 @@ describe('indd preview renditions', () => {
     expect(RENDITION_NAMES).toEqual(expect.arrayContaining(['cq5dam.thumbnail.319.319.jpeg', 'cq5dam.web.1280.1280.jpeg']))
   })
 })
+
+test('an INDD is related to its multi-page PDF as a derived asset', () => {
+  const { planRelations } = require('../actions/generate-idapi-banners/relations')
+  const plan = planRelations('T', [{ inddId: 'I', imageIds: ['A'], derivedIds: ['P'] }])
+  const onI = plan.find((p) => p.onId === 'I').items
+  expect(onI).toEqual(expect.arrayContaining([{ assetId: 'P', relationType: 'derived' }, { assetId: 'A', relationType: 'other' }]))
+  expect(plan.find((p) => p.onId === 'T').items).toEqual([{ assetId: 'I', relationType: 'derived' }])
+  expect(planRelations('T', [{ inddId: 'I', imageIds: [] }]).find((p) => p.onId === 'I')).toBeUndefined()
+})
+
+test('PDFs count as deliverables', () => {
+  const { isDeliverable } = require('../actions/job-utils')
+  expect(['a.pdf', 'a.indd', 'a.jpg', 'a.psd'].every(isDeliverable)).toBe(true)
+  expect(isDeliverable('_run_log.txt')).toBe(false)
+})

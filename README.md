@@ -321,6 +321,13 @@ If this fails (for example the credential may not call the experimental renditio
 succeeds and the reason is returned as `renditionWarnings`. Generated PSDs and JPGs need nothing:
 AEM thumbnails those itself.
 
+### A multi-page PDF per INDD
+
+Choosing **+ editable file** on an InDesign template also exports one multi-page PDF per variation
+(`<outputFileName>.pdf`, every page/size in one file, using the *Smallest File Size* preset). It is uploaded
+next to the `.indd` and related to it as a *derived* asset, so it appears in the INDD's Asset Relations
+panel; open it in Assets View to flip through all the sizes at once in the PDF viewer.
+
 ### Relations in AEM
 
 Assets View shows only explicit asset **relations**, not the automatic Asset Link
