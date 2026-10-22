@@ -19,6 +19,7 @@ const { remapSources, linksFromIndd } = require('./remap')
 const { damLinksFromTemplate, resolveSwappedImages } = require('./links')
 const psd = require('./psd')
 const images = require('./images')
+const { attachPreview, previewKey } = require('./renditions')
 const { classify } = require('./classify')
 const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
 
@@ -554,7 +555,9 @@ async function processBatch (params, job, state) {
     const plan = await planImages(author, aemToken, folder, c, varText, { allowBareUnresolved: true })
     varText = rewriteCsvText(varText, plan)
     staged.push({ dest: destFor('variations'), buf: Buffer.from(varText, 'utf8') })
-    staged.push({ dest: destFor('pagemap'), buf: await aemDownload(author, aemToken, folder + '/' + c.pagemap.name) })
+    const pagemapBuf = await aemDownload(author, aemToken, folder + '/' + c.pagemap.name)
+    staged.push({ dest: destFor('pagemap'), buf: pagemapBuf })
+    const firstPage = psd.pagemapNames(csvRecords(pagemapBuf.toString('utf8')))[0] || '' // its JPG becomes each .indd's AEM preview
     const { fromLinks } = await resolveImages(author, folder, templateBuf, plan)
     const aemSource = new Map(c.images.map((im) => [im.name, `${folder}/${im.name}`]))
     const subfolderImages = new Map(plan.resolved.filter((r) => !aemSource.has(r.staged)).map((r) => [r.staged, r.damPath]))
@@ -598,6 +601,7 @@ async function processBatch (params, job, state) {
     const written = []
     const remapWarnings = []
     const inddRecords = []   // { name, imageNames } for relations
+    const previews = new Map() // variation -> JPG buffer of its first page
     // result.json (from the script) records each saved INDD's local image links.
     let linkMap = {}
     const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
@@ -607,6 +611,8 @@ async function processBatch (params, job, state) {
       if (name === 'result.json') continue
       if (job && (job.outputs || []).includes(name)) continue
       let buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
+      const pk = previewKey(name, firstPage)
+      if (pk) previews.set(pk, buf)
       if (/\.indd$/i.test(name)) {
         // Restore AEM Asset Link references: the render left swapped images linked to
         // local staged copies. A failed remap keeps the unremapped INDD rather than the job.
@@ -630,6 +636,20 @@ async function processBatch (params, job, state) {
       await aemUpload(author, aemToken, outFolder, name, buf, mimeOf(name))
       written.push(name)
     }
+    // 5a. AEM cannot thumbnail the generated .indd (the InDesign API embeds no page preview), so attach the
+    // first page's rendered JPG as its standard renditions. Failures only warn.
+    let renditionsCreated = 0
+    const renditionWarnings = []
+    for (const r of inddRecords) {
+      const preview = previews.get(r.name.replace(/\.indd$/i, ''))
+      if (!preview) { renditionWarnings.push(`${r.name}: no rendered ${firstPage || 'first-page'} image to use as its preview`); continue }
+      try {
+        const res = await attachPreview(author, aemToken, await assetId(author, aemToken, `${outFolder}/${r.name}`), preview)
+        renditionsCreated += res.created
+        renditionWarnings.push(...res.warnings.map((w) => `${r.name}: ${w}`))
+      } catch (e) { renditionWarnings.push(`${r.name}: ${e.message}`) }
+    }
+    if (renditionWarnings.length) logger.warn(`rendition warnings: ${renditionWarnings.join(' | ')}`)
     // 5b. AEM relations (Assets View shows these, not the automatic Asset Link references):
     // template -> INDD (derived) and INDD <-> its source images (other). Failures only warn.
     let relationsCreated = 0
@@ -678,6 +698,8 @@ async function processBatch (params, job, state) {
         remapWarnings,
         relationsCreated,
         relationWarnings,
+        renditionsCreated,
+        renditionWarnings,
         outputs: written
       }
     }

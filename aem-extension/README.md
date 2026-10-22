@@ -74,6 +74,15 @@ image under one flat name (folder names are folded into the name only when two d
 rewrites the CSV cells to those names before the render script sees them. The same resolution runs in the
 preflight, for both INDD and PSD templates; AEM relations and Asset Link remapping point at the real DAM paths.
 
+### INDD previews
+
+Generated `.indd` files carry no embedded page preview (InDesign Server writes none), so AEM would show a
+generic icon. After each INDD upload the worker attaches the first pagemap page's JPG as the standard AEM
+renditions (`cq5dam.thumbnail.48.48|140.100|319.319.jpeg`, `cq5dam.web.1280.1280.jpeg`,
+`cq5dam.zoom.2048.2048.jpeg`) via `POST /adobe/assets/{id}/renditions/{name}` + `completeUpload`. That API is
+still experimental on AEM CS and needs the `X-Adobe-Accept-Experimental: 1` header (without it the calls 404).
+Failures are returned as `renditionWarnings` and never fail the job. See `renditions.js`.
+
 ### Output folders
 
 `<folder>/output` is used when empty; otherwise each run goes into a datetime-stamped subfolder

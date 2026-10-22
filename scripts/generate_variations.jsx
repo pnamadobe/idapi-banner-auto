@@ -261,6 +261,10 @@
                     }
                 } catch (eL) {}
                 linkMaps.push(jesc(stem + ".indd") + ':[' + rowLinks.join(",") + ']');
+                // Ask InDesign to save a page preview (Preferences > File Handling > Always Save Preview Images).
+                // The headless InDesign API currently writes none, so the orchestrator attaches the rendered
+                // first page to the .indd as AEM renditions instead (see renditions.js); harmless where honoured.
+                try { app.generalPreferences.includePreview = true; } catch (eP) { warn.push("includePreview: " + eP); }
                 doc.saveACopy(new File(outDir.fsName + "/" + stem + ".indd"));
                 inddWritten++; outFiles.push(U.CONFIG.outputRel + "/" + stem + ".indd");
             }

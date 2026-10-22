@@ -310,6 +310,17 @@ links; the AEM relations below record the connection instead. Design notes, API 
 and what was learned getting the framing to match InDesign are in
 [docs/PSD-DESIGN.md](docs/PSD-DESIGN.md).
 
+### Previews for generated INDDs in AEM
+
+AEM builds an `.indd`'s thumbnail from a page preview that desktop InDesign embeds when it saves. The
+InDesign API is a headless InDesign Server and embeds none, so a generated `.indd` would show a generic
+icon in Assets View. After uploading each INDD, the job therefore attaches the first pagemap page's
+rendered JPG as the asset's standard renditions (`cq5dam.thumbnail.*`, `cq5dam.web.*`, `cq5dam.zoom.*`)
+through the Assets Author API, so the INDD shows what it looks like in the grid and the preview panel.
+If this fails (for example the credential may not call the experimental rendition API) the job still
+succeeds and the reason is returned as `renditionWarnings`. Generated PSDs and JPGs need nothing:
+AEM thumbnails those itself.
+
 ### Relations in AEM
 
 Assets View shows only explicit asset **relations**, not the automatic Asset Link

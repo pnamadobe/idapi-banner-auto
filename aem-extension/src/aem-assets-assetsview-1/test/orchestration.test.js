@@ -57,3 +57,17 @@ describe('selected template', () => {
     expect(['../a.psd', 'x/a.psd', 'a.csv', '', undefined].some(isTemplateName)).toBe(false)
   })
 })
+
+describe('indd preview renditions', () => {
+  const { previewKey, RENDITION_NAMES } = require('../actions/generate-idapi-banners/renditions')
+  test('the first pagemap page of a variation is its preview', () => {
+    expect(previewKey('WEB_LEADERBOARD_1000x320_ski-couple.jpg', 'WEB_LEADERBOARD_1000x320')).toBe('ski-couple')
+    expect(previewKey('WEB_LEADERBOARD_1000x320_ski_couple_v2.jpg', 'WEB_LEADERBOARD_1000x320')).toBe('ski_couple_v2')
+    expect(previewKey('APP_CARD_890x1335_ski-couple.jpg', 'WEB_LEADERBOARD_1000x320')).toBeNull()
+    expect(previewKey('WEB_LEADERBOARD_1000x320_ski-couple.png', 'WEB_LEADERBOARD_1000x320')).toBeNull()
+    expect(previewKey('anything.jpg', '')).toBeNull()
+  })
+  test('uses the standard AEM rendition names', () => {
+    expect(RENDITION_NAMES).toEqual(expect.arrayContaining(['cq5dam.thumbnail.319.319.jpeg', 'cq5dam.web.1280.1280.jpeg']))
+  })
+})
