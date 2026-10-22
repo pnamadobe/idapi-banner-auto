@@ -126,3 +126,11 @@ test('hero is cover-fitted to the wide frame, so the photo extends past the righ
   expect(framed.offset.horizontal).toBeGreaterThan(-1) // left edge of the photo area stays at/inside the page's left
   expect(framed.offset.horizontal + framed.dimension.width).toBeGreaterThan(890) // photo overhangs the right edge
 })
+
+test('editable-only PSD runs request just the PSD output', () => {
+  const ab = psd.artboardsFromManifest(manifest)
+  const only = psd.buildComposite({ sourceUrl: 's', artboards: ab, row: {}, imageUrl: (n) => n, includePsd: true, includeJpegs: false })
+  expect(only.outputs).toEqual([{ destination: { validityPeriod: 3600 }, mediaType: 'image/vnd.adobe.photoshop' }])
+  const both = psd.buildComposite({ sourceUrl: 's', artboards: ab, row: {}, imageUrl: (n) => n, includePsd: true })
+  expect(both.outputs).toHaveLength(ab.length + 1)
+})

@@ -34,9 +34,9 @@ function resolveActionUrl(action = 'generate-idapi-banners') {
   return hit ? hit[1] : null;
 }
 
-async function deterministicJobId(folder, writeIndd, template) {
+async function deterministicJobId(folder, mode, template) {
   // must match keyFor() in actions/job-utils.js
-  const input = new TextEncoder().encode(`${folder}|${writeIndd ? '1' : '0'}${template ? `|${template}` : ''}`);
+  const input = new TextEncoder().encode(`${folder}|${mode === 'images' ? '0' : '1'}${template ? `|${template}` : ''}${mode === 'editable' ? '|editable-only' : ''}`);
   const digest = await crypto.subtle.digest('SHA-256', input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 48);
 }
@@ -46,6 +46,7 @@ export default function ModalIndesignBannersGeneration() {
   const [colorScheme, setColorScheme] = useState('light');
   const [job] = useState(readJob);
   const { folder, template, aemAuthorUrl } = job;
+  const editableKind = /\.psd$/i.test(template) ? 'PSD' : 'INDD';
   const [status, setStatus] = useState('idle'); // idle | running | done | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -112,7 +113,8 @@ export default function ModalIndesignBannersGeneration() {
 
   const close = () => guestConnection && guestConnection.host.modal.closeDialog();
 
-  async function generate(writeIndd = false) {
+  // mode: 'images' (flattened images only) | 'both' (images + editable file) | 'editable' (editable file only)
+  async function generate(mode = 'images') {
     setStatus('running');
     setError('');
     const url = resolveActionUrl();
@@ -121,7 +123,7 @@ export default function ModalIndesignBannersGeneration() {
     // a spinner: race a short window to surface fast failures (auth/missing inputs);
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
-    const call = actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, writeIndd: writeIndd ? '1' : '' })
+    const call = actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'images' ? '' : '1' })
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
     const outcome = await Promise.race([
@@ -129,7 +131,7 @@ export default function ModalIndesignBannersGeneration() {
       new Promise((res) => setTimeout(() => res({ started: true }), 6000)),
     ]);
     if (outcome.started) {
-      setResult({ jobId: await deterministicJobId(folder, writeIndd, template) });
+      setResult({ jobId: await deterministicJobId(folder, mode, template) });
       setStatus('started');
       return;
     }
@@ -171,8 +173,9 @@ export default function ModalIndesignBannersGeneration() {
               Results land in <b>{folder}/output</b> (in a datetime-stamped subfolder if it already has assets) — unpublished, for your review.
             </Text>
             <Text>
-              Choose <b>Generate banners</b> for images only, or <b>+ editable file</b> to also
-              write a reopenable {/\.psd$/i.test(template) ? 'PSD' : 'INDD'} per variation (larger output).
+              Choose <b>Generate banners</b> for the flattened images only, <b>+ editable file</b> to also
+              write a reopenable {editableKind} per variation (larger output), or <b>Editable files only</b> to
+              skip the flattened images{/\.psd$/i.test(template) ? '' : ' (each INDD still gets its preview and a multi-page PDF)'}.
             </Text>
             {estimate && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -187,8 +190,9 @@ export default function ModalIndesignBannersGeneration() {
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
             <ButtonGroup orientation="vertical" width="100%">
-              <Button variant="accent" width="100%" onPress={() => generate(false)}>Generate banners</Button>
-              <Button variant="primary" width="100%" onPress={() => generate(true)}>Generate banners + editable file</Button>
+              <Button variant="accent" width="100%" onPress={() => generate('images')}>Generate banners</Button>
+              <Button variant="primary" width="100%" onPress={() => generate('both')}>Generate banners + editable file</Button>
+              <Button variant="primary" width="100%" onPress={() => generate('editable')}>Editable {editableKind}s only (no flattened images)</Button>
               <Button variant="secondary" width="100%" onPress={close}>Cancel</Button>
             </ButtonGroup>
           </Flex>

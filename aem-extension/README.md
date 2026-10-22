@@ -74,6 +74,15 @@ image under one flat name (folder names are folded into the name only when two d
 rewrites the CSV cells to those names before the render script sees them. The same resolution runs in the
 preflight, for both INDD and PSD templates; AEM relations and Asset Link remapping point at the real DAM paths.
 
+### Output modes
+
+The start action takes `mode`: `images` (default), `both` (images + editable file; legacy `writeIndd=1` means this), or
+`editable` (editable files only). `editable` sends `skipImages` to the worker: InDesign still renders the pages but only the
+first page of each variation is fetched (as the INDD's AEM preview) and nothing else is uploaded; Photoshop requests only the
+PSD output. The mode is part of the job key (`|editable-only` suffix), so each mode is a separate job. Because AEM infers a
+"derived from the template" relation for each generated PDF from its XMP shortly after upload, the worker re-asserts the
+INDD -> PDF relation once when the job finishes (`finalizeRelations`, about 30-50 s).
+
 ### INDD PDFs
 
 With the editable option on an InDesign template the script (`writePdf` script parameter, set together with

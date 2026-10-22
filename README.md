@@ -239,6 +239,20 @@ one that runs, whether it is an `.indd` or a `.psd`; each template gets its own 
 the button appears only when exactly one template is selected. (From the command line,
 the first file named `*template*.indd|psd` is used.)
 
+### What to generate
+
+The Generate Banners dialog offers three choices, for both InDesign and Photoshop templates:
+
+| Button | You get |
+|---|---|
+| **Generate banners** | The flattened JPGs only (one per page/size per variation). |
+| **Generate banners + editable file** | The JPGs **and** one editable file per variation: an `.indd` (with its multi-page PDF and a preview) or a `.psd`. |
+| **Editable files only** | Just the editable `.indd` (plus its PDF and AEM preview) or `.psd`, with **no flattened images** uploaded. |
+
+Each choice is its own job, so you can run images first and editable files later without them blocking each other.
+For InDesign, the page images are still rendered (the first page becomes the `.indd`'s AEM preview) but not uploaded;
+for Photoshop, the JPG outputs are not requested at all, which is faster.
+
 ### Where results land
 
 Results go to `<folder>/output`. If that folder already has assets, the run goes into a

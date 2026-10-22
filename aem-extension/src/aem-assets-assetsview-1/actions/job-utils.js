@@ -2,7 +2,16 @@ const crypto = require('crypto')
 
 // One job per (folder, editable-output option, selected template). Without a template the key is the
 // legacy folder|option one, so jobs started before templates were selectable keep their key.
-const keyFor = (folder, writeIndd, template) => `idapi-job-${crypto.createHash('sha256').update(`${folder}|${writeIndd ? '1' : '0'}${template ? `|${template}` : ''}`).digest('hex').slice(0, 48)}`
+// Editable-only runs (no flattened images) are a different job from images-only / images + editable ones.
+const keyFor = (folder, writeIndd, template, editableOnly) => `idapi-job-${crypto.createHash('sha256').update(`${folder}|${writeIndd ? '1' : '0'}${template ? `|${template}` : ''}${editableOnly ? '|editable-only' : ''}`).digest('hex').slice(0, 48)}`
+// What a request asks for: mode 'editable' = only the editable file (+ its PDF/previews), 'both' = images and the
+// editable file (legacy writeIndd=1), anything else = images only.
+const outputMode = (params) => {
+  const mode = String(params.mode || '').toLowerCase()
+  if (mode === 'editable') return { editable: true, images: false }
+  if (mode === 'both' || /^(1|true|yes)$/i.test(String(params.writeIndd || ''))) return { editable: true, images: true }
+  return { editable: false, images: true }
+}
 // The selected template is a bare file name inside the job folder (it is appended to a DAM path).
 const isTemplateName = (name) => /^[^/\\\x00-\x1f]+\.(indd|psd)$/i.test(String(name || ''))
 // Deliverables only (images + editable INDD); excludes _run_log.txt and similar side files.
@@ -27,4 +36,4 @@ function outputUrl (job, params = {}) {
   return `https://experience.adobe.com/?repoId=${new URL(author).host}#/${tenant}/assets/browse${path}`
 }
 
-module.exports = { keyFor, publicJob, isDeliverable, outputUrl, isTemplateName }
+module.exports = { keyFor, publicJob, isDeliverable, outputUrl, isTemplateName, outputMode }

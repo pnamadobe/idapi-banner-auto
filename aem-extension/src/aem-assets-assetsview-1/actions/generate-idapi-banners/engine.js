@@ -407,7 +407,7 @@ async function psFetchOutput (p, tok, output) {
 }
 
 // One batch of a PSD job: one create-composite call per CSV row, one JPEG per pagemap artboard.
-async function renderPsdBatch ({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable }) {
+async function renderPsdBatch ({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable, writeImages = true }) {
   const staged = []
   staged.push({ dest: destFor('psd'), buf: await aemDownload(author, aemToken, `${folder}/${c.template.name}`) })
   let varText = (await aemDownload(author, aemToken, `${folder}/${c.variations.name}`)).toString('utf8')
@@ -462,13 +462,14 @@ async function renderPsdBatch ({ params, job, state, logger, author, aemToken, f
       imageUrl: (name) => urlOf.get(destFor('image', name)),
       imageDims: (name) => imageDims.get(name) || null,
       includePsd: writeEditable,
+      includeJpegs: writeImages,
       // Photo-frame aspect of the matching InDesign template (default 1700/688); 0 disables
       heroFrameAspect: params.PSD_HERO_FRAME_ASPECT === undefined || params.PSD_HERO_FRAME_ASPECT === '' ? 1700 / 688 : Number(params.PSD_HERO_FRAME_ASPECT)
     })
     logger.info(`psd: rendering row ${rowOffset + i + 1} (${body.edits.layers.length} edits, ${body.outputs.length} outputs)`)
     const res = await psJob(params, tok, '/v2/create-composite', body)
     const outs = res.result.outputs || []
-    for (let k = 0; k < selected.length; k++) {
+    for (let k = 0; writeImages && k < selected.length; k++) {
       const name = psd.outputName(selected[k], rows[i], rowOffset + i)
       await aemUpload(author, aemToken, outFolder, name, await psFetchOutput(params, tok, outs[k]), mimeOf(name))
       written.push(name)
@@ -476,7 +477,7 @@ async function renderPsdBatch ({ params, job, state, logger, author, aemToken, f
     if (writeEditable) {
       // Editable PSD (all artboards) for this row; remember which job-folder images it uses for relations.
       const name = psd.psdOutputName(rows[i], rowOffset + i)
-      await aemUpload(author, aemToken, outFolder, name, await psFetchOutput(params, tok, outs[selected.length]), mimeOf(name))
+      await aemUpload(author, aemToken, outFolder, name, await psFetchOutput(params, tok, outs[writeImages ? selected.length : 0]), mimeOf(name))
       written.push(name)
       psdRecords.push({ name, imageNames: [...new Set(Object.values(rows[i]).filter(psd.isImageCell).map((v) => String(v).trim().split('/').pop()))] })
     }
@@ -523,7 +524,7 @@ async function processBatch (params, job, state) {
     if (missing.length) return errorResponse(400, missingMessage(missing, params.template), logger)
 
     if (isPsd(c.template.name)) {
-      const r = await renderPsdBatch({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable: /^(1|true|yes)$/i.test(String(params.writeIndd || '')) })
+      const r = await renderPsdBatch({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable: /^(1|true|yes)$/i.test(String(params.writeIndd || '')), writeImages: !/^(1|true|yes)$/i.test(String(params.skipImages || '')) })
       if (state && job) {
         const completed = new Set(job.outputs || [])
         r.written.forEach((name) => completed.add(name))
@@ -594,6 +595,7 @@ async function processBatch (params, job, state) {
     const idTok = await imsToken(params)
     // writeIndd: also emit an editable .indd per variation (the second modal button)
     const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
+    const skipImages = writeIndd && /^(1|true|yes)$/i.test(String(params.skipImages || ''))
     // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
     const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd })
 
@@ -612,6 +614,13 @@ async function processBatch (params, job, state) {
       const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
       if (name === 'result.json') continue
       if (job && (job.outputs || []).includes(name)) continue
+      // Editable-only run: the rendered page images are not delivered. The first page's JPG is still kept in
+      // memory as the .indd's AEM preview (see attachPreview below); every other image is skipped unfetched.
+      if (skipImages && /\.(jpe?g|png)$/i.test(name)) {
+        const pk = previewKey(name, firstPage)
+        if (pk) previews.set(pk, Buffer.from(await (await fetch(o.url)).arrayBuffer()))
+        continue
+      }
       let buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
       const pk = previewKey(name, firstPage)
       if (pk) previews.set(pk, buf)
@@ -717,6 +726,36 @@ async function processBatch (params, job, state) {
   }
 }
 
+// AEM infers "derived" relations from a file's XMP after upload; a generated PDF's XMP points at the template
+// the INDD was saved from, so a little after upload AEM relates each PDF to the *template* and drops the
+// INDD -> PDF relation we created straight after the upload. Once a job has finished, put it back.
+// Returns { fixed, warnings }.
+async function finalizeRelations (author, token, outFolder, outputs) {
+  const pdfs = outputs.filter((n) => /\.pdf$/i.test(n) && outputs.includes(n.replace(/\.pdf$/i, '.indd')))
+  const warnings = []
+  let fixed = 0
+  if (!pdfs.length) return { fixed, warnings }
+  for (const wait of [30000, 20000]) {
+    await sleep(wait)
+    const plan = []
+    for (const pdf of pdfs) {
+      try {
+        const inddId = await assetId(author, token, `${outFolder}/${pdf.replace(/\.pdf$/i, '.indd')}`)
+        const pdfId = await assetId(author, token, `${outFolder}/${pdf}`)
+        const res = await fetch(`${author}/adobe/assets/${inddId}/relations`, { headers: { Authorization: `Bearer ${token}` } })
+        const items = res.ok ? (await res.json()).items || [] : []
+        if (!items.some((i) => i.assetId === pdfId && i.relationType === 'derived')) plan.push({ onId: inddId, items: [{ assetId: pdfId, relationType: 'derived' }] })
+      } catch (e) { warnings.push(`${pdf}: ${e.message}`) }
+    }
+    if (!plan.length) break
+    const r = await applyPlan(author, token, plan)
+    fixed += r.created
+    warnings.push(...r.warnings)
+  }
+  return { fixed, warnings }
+}
+
+exports.finalizeRelations = finalizeRelations
 exports.processBatch = processBatch
 exports.inspectInputs = inspectInputs
 exports.resolveOutputFolder = resolveOutputFolder

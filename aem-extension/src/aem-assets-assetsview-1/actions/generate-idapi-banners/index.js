@@ -5,7 +5,7 @@
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
 const { errorResponse, stringParameters, checkMissingRequestInputs } = require('../utils')
-const { keyFor, publicJob: baseJob, outputUrl, isTemplateName } = require('../job-utils')
+const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = require('../job-utils')
 const { inspectInputs, resolveOutputFolder } = require('./engine')
 
 const ttl = 7 * 24 * 3600
@@ -37,8 +37,8 @@ async function main (params) {
       return { statusCode: 200, body: estimate }
     }
     const state = await stateLib.init()
-    const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
-    const stateKey = keyFor(params.folder, writeIndd, template)
+    const { editable: writeIndd, images: writeImages } = outputMode(params)
+    const stateKey = keyFor(params.folder, writeIndd, template, !writeImages)
     const existing = await state.get(stateKey)
     if (existing) {
       const job = JSON.parse(existing.value)
@@ -83,6 +83,7 @@ async function main (params) {
       template,
       aemAuthorUrl: params.aemAuthorUrl || '',
       writeIndd,
+      writeImages,
       batchSize: Math.max(1, Math.min(10, Number(params.batchSize) || 2)),
       outputFolder: await resolveOutputFolder(params),
       rowOffset: 0,

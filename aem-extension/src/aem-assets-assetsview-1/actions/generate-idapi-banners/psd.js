@@ -156,7 +156,7 @@ const outputName = (artboard, row, index) => `${artboard.name}_${String(row.outp
 
 // One create-composite request body for one CSV row.
 //   sourceUrl: presigned URL of the PSD; fontUrls: [url]; imageUrl(name) -> presigned URL
-function buildComposite ({ sourceUrl, fontUrls = [], artboards, row, imageUrl, imageDims = () => null, heroFrameAspect = 0, includePsd = false, validityPeriod = 3600 }) {
+function buildComposite ({ sourceUrl, fontUrls = [], artboards, row, imageUrl, imageDims = () => null, heroFrameAspect = 0, includePsd = false, includeJpegs = true, validityPeriod = 3600 }) {
   const layers = []
   for (const a of artboards) {
     for (const [name, l] of a.layers) {
@@ -188,7 +188,7 @@ function buildComposite ({ sourceUrl, fontUrls = [], artboards, row, imageUrl, i
     image: { source: { url: sourceUrl } },
     fontOptions: { additionalFonts: fontUrls.map((url) => ({ source: { url } })), missingFontStrategy: 'fail' },
     edits: { layers },
-    outputs: artboards.map((a) => ({
+    outputs: (includeJpegs ? artboards : []).map((a) => ({
       destination: { validityPeriod },
       mediaType: 'image/jpeg',
       layers: [{ id: a.id, shouldIncludeChildren: true }],
