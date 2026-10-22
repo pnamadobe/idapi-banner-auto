@@ -1,4 +1,4 @@
-# 🎨 Banner Automation — on-brand banners (using InDesign API)
+# 🎨 Banner Automation — on-brand banners (InDesign **and** Photoshop templates)
 
 **One template. One CSV. Every size, every variation — rendered automatically, perfectly on-brand.**
 
@@ -7,6 +7,11 @@ production-ready banners — every ad size, every localized variant — without 
 designer ever touching InDesign. It runs **headless in the cloud** on the Adobe
 InDesign API: no desktop app, no manual export, no workstation in the loop — a
 whole campaign's worth of on-brand banners, rendered on demand.
+
+> **Works with InDesign (`.indd`) and Photoshop (`.psd`) templates.** Select either in
+> AEM Assets View and click **Generate Banners** — InDesign templates render on the
+> Adobe InDesign API, Photoshop templates on the Adobe Photoshop API (v2). See
+> [Photoshop (PSD) templates](#photoshop-psd-templates).
 
 ![Banners rendered from one template — multiple placements, English and Spanish headlines, and two campaign versions](examples/showcase-hero.jpg)
 
@@ -101,6 +106,12 @@ sizes, that distinction is decisive.
 > **In short:** Photoshop paints pixels; InDesign composes pages — and a banner is
 > a page.
 
+That said, plenty of design teams already live in Photoshop, so **Photoshop (`.psd`)
+templates are supported too** — one artboard per size, layers named after the CSV
+columns. Pick InDesign when copy-fitting and editable layouts matter most; pick
+Photoshop when your templates are already built there. Details in
+[Photoshop (PSD) templates](#photoshop-psd-templates).
+
 ## The vision: one click, right inside AEM
 
 The endgame is a **"Generate Banners" button in Adobe Experience Manager Assets.**
@@ -130,10 +141,10 @@ flowchart LR
   on the Adobe InDesign API and resolves its own working directory, so the same
   job produces the same banners every time — no workstation, no manual setup,
   nothing to babysit.
-- **Folder-as-key convention.** A job is just a folder: the `*template*.indd`,
-  a variations CSV, a `*pagemap*` CSV, the images, and an `output/` folder. No
+- **Folder-as-key convention.** A job is just a folder: the `*template*.indd` or
+  `*template*.psd`, a variations CSV, a `*pagemap*` CSV, the images, and an `output/` folder. No
   config files, no database — the layout *is* the contract.
-- **Cloud-native & serverless.** No InDesign desktop to install or babysit.
+- **Cloud-native & serverless.** No InDesign or Photoshop desktop to install or babysit.
   Rendering happens on Adobe's infrastructure and scales with the work.
 - **Governed by design, not by discipline.** On-brand output isn't a review
   step you hope people follow — it's a property of the template they can't
@@ -198,15 +209,28 @@ A campaign folder contains everything a job needs — nothing more:
 
 ```
 your-campaign/
-├── brand-template.indd        # the design (filename contains "template")
+├── brand-template.indd        # the design (filename contains "template") — or brand-template.psd
 ├── variations.csv             # one row per banner variation
 ├── pagemap.csv                # size/page mapping (filename contains "pagemap")
 ├── hero-1.jpg, hero-2.jpg …   # imagery referenced by the CSV
-└── output/                    # rendered JPG + INDD land here
+└── output/                    # rendered JPG + INDD/PSD land here
 ```
 
-Drop in the ingredients, run one command (or, soon, click one button) — collect
+Drop in the ingredients, run one command (or click one button in AEM) — collect
 the results.
+
+**Several templates in one folder is fine.** In AEM, the template you *select* is the
+one that runs, whether it is an `.indd` or a `.psd`; each template gets its own job, and
+the button appears only when exactly one template is selected. (From the command line,
+the first file named `*template*.indd|psd` is used.)
+
+### Where results land
+
+Results go to `<folder>/output`. If that folder already has assets, the run goes into a
+datetime-stamped subfolder instead (`output/2026-10-22_171540`, UTC), so earlier results
+are never mixed with or overwritten by a new run. The modal links straight to the output
+folder in Assets View once the job starts (set `ASSETS_VIEW_TENANT`, see
+[SETUP.md](SETUP.md)), and celebrates when the job completes. 🎉
 
 ### Editable INDDs keep AEM Asset Link references
 
@@ -238,15 +262,48 @@ Opening the file:
   reason is logged and returned as `remapWarnings`.
 - JPG outputs are unaffected.
 
+### Photoshop (PSD) templates
+
+A Photoshop template works like an InDesign one, with **layer names in place of Script
+Labels**:
+
+- **One artboard per size.** Name each artboard exactly like the `pagename` column of the
+  pagemap CSV (`WEB_LEADERBOARD_1000x320`, …). Only the artboards the pagemap lists are rendered.
+- **Layer name = CSV column.** A **text layer** named `headline` takes the `headline`
+  column; a **smart object** named `hero` takes the image file named in the `hero` column.
+  Use the same layer names on every artboard. Static layers (backgrounds, shapes, bars)
+  are left alone, and hidden layers stay hidden. A line break in a cell becomes a paragraph
+  break in the text layer.
+- **Output.** One JPG per artboard per row (`<artboard>_<outputFileName>.jpg`). With
+  **+ editable file**, one `.psd` per row too (all artboards), embedded smart objects.
+- **Fonts.** Put the fonts the template uses in the shared `/content/dam/fonts` folder or the
+  job's `fonts/` subfolder. A missing font fails the job rather than silently substituting one.
+- **Hero photos.** A full-bleed smart object (its frame spans the artboard width) is
+  cover-fitted like an InDesign photo frame: scaled to cover a wide frame anchored at the left,
+  so the left of the photo stays prominent, then cropped by the artboard. The frame's shape is
+  `PSD_HERO_FRAME_ASPECT` (width/height of the photo frame in your matching InDesign template;
+  default `2.4709`; `0` = cover only the visible area). If the hero has a content band below it
+  (a layer named `band`), the photo stops where the band starts. The hero's layer mask, if it has
+  one, stays where the template put it, so use a mask to mark the visible area.
+- **Needs** the Photoshop API (v2, Firefly Services) on the same Developer Console
+  credential as the InDesign API — see [SETUP.md](SETUP.md).
+
+Limits to know about: PSD text is replaced as-is (no copy-fit or overset detection), and a
+shape behind a text layer (such as a highlight bar) does not resize to fit new copy — size
+it for your longest value. The editable PSD embeds its images, so it carries no in-file AEM
+links; the AEM relations below record the connection instead. Design notes, API settings
+and what was learned getting the framing to match InDesign are in
+[docs/PSD-DESIGN.md](docs/PSD-DESIGN.md).
+
 ### Relations in AEM
 
 Assets View shows only explicit asset **relations**, not the automatic Asset Link
 references, so after the INDDs are uploaded the job creates them through the AEM
 Assets Author API (`/adobe/assets/{id}/relations`):
 
-- **Template → INDD:** each generated INDD is a *derived* asset of the job's template,
-  so the INDD's Asset Relations panel shows the template as its source.
-- **INDD ↔ images:** each INDD and the source images it links (the swapped images and
+- **Template → INDD (or PSD):** each generated editable file is a *derived* asset of the job's
+  template, so its Asset Relations panel shows the template as its source.
+- **INDD/PSD ↔ images:** each INDD and the source images it links (the swapped images and
   other staged art such as the lockup) are related as *Other*, in both directions.
 
 Existing relations are skipped, so reruns that overwrite the same output names are
@@ -289,10 +346,12 @@ the folder's `output/`.
 - [x] Headless cloud render on the Adobe InDesign API
 - [x] App Builder Runtime action + presigned storage + AEM read/write-back
 - [x] AEM Assets View "Generate Banners" extension
+- [x] Photoshop (`.psd`) templates via the Adobe Photoshop API — layer-name contract, editable PSDs, AEM relations
+- [x] Timestamped output subfolders, output-folder link, selected-template handling
 
 ## Built with
 
-Adobe InDesign · Adobe InDesign API (Firefly Services) · ExtendScript · Adobe IMS
+Adobe InDesign · Adobe InDesign API and Adobe Photoshop API (Firefly Services) · ExtendScript · Adobe IMS
 · Node.js · Adobe Experience Manager · App Builder / Adobe I/O Runtime
 
 ---

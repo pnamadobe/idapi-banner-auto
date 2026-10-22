@@ -47,6 +47,13 @@ FFS product, which lights up the **InDesign API** tile in Adobe Developer Consol
 > This is the same gate as everything else — until the org has FFS, no InDesign
 > API credential can be created. Don't burn time on later parts until this clears.
 
+**Using Photoshop (`.psd`) templates?** Also add the **Photoshop API** (v2) to the same
+Dev Console project, so the one OAuth Server-to-Server credential covers both. The
+credential works as soon as the API is added; if you call the Photoshop API and get
+`403 "Api Key is invalid"`, it isn't added to that project yet, and `403 "retired"` means the
+old v1 endpoints were used (this repo uses v2: `photoshop-api.adobe.io`). Without it,
+InDesign templates still work and PSD jobs fail with the API's error.
+
 ---
 
 ## Part 2 — Dev Console OAuth Server-to-Server credential
@@ -193,7 +200,7 @@ In AEM Assets, create a folder (this is the "key") containing:
 
 | Item | Rule |
 |------|------|
-| InDesign template | filename contains **`template`**, ends `.indd` |
+| Template | filename contains **`template`**, ends `.indd` (InDesign) or `.psd` (Photoshop). With several in one folder, the one you select in Assets View runs |
 | Variations CSV | a `.csv` with a reserved `outputFileName` column plus content columns |
 | Pagemap CSV | filename contains **`pagemap`** (`pagenumber,pagename`) |
 | Hero images | the `.jpg/.png` referenced by the variations CSV — in the folder, or AEM-linked (Asset Link) in the template. Editable INDDs link them back to AEM; see the README |
@@ -229,6 +236,13 @@ If a batch handoff is delayed or lost, the status action automatically wakes
 the worker when a job has remained queued for more than 45 seconds. The worker
 lock makes this recovery safe if the original invocation starts at the same
 time, so a user does not need to manually wake the job.
+
+### Photoshop template contract
+
+For a `.psd` template, the contract is layer names instead of Script Labels: one **artboard**
+per output size, named like the pagemap's `pagename`; text layers and smart objects named like
+the variations CSV's columns (same names on every artboard). See *Photoshop (PSD) templates* in
+the [README](README.md#photoshop-psd-templates) and [docs/PSD-DESIGN.md](docs/PSD-DESIGN.md).
 
 ### InDesign template contract
 
@@ -353,8 +367,15 @@ Exchange + reopen in incognito + pick the right org**. Approval flips it from
 
 **5. Enable the extension per-environment** in **Extension Manager** (EM SPA).
 
-The **Generate Banners** button then appears in that env's Assets View when an
-`.indd` is selected.
+The **Generate Banners** button then appears in that env's Assets View when exactly one
+`.indd` or `.psd` is selected.
+
+Optional deployment settings (in `aem-extension/.env`, see `.env.example`):
+
+| Setting | Purpose |
+|---|---|
+| `ASSETS_VIEW_TENANT` | The `@org` slug in your Assets View URLs (`experience.adobe.com/#/@yourorg/assets/...`). Enables the "open the output folder" link in the modal. Omit for no link. |
+| `PSD_HERO_FRAME_ASPECT` | PSD templates: width/height of the photo frame in your matching InDesign template (default `2.4709`; `0` = cover only the visible area). |
 
 ### Faster dev loop (skip the publish cycle)
 Republishing on every change is painful. Deploy to **Stage** (no approval) and inject

@@ -1,5 +1,5 @@
 const stateLib = require('@adobe/aio-lib-state')
-const { publicJob } = require('./job-utils')
+const { publicJob, outputUrl } = require('./job-utils')
 const { aemContext, aemDownload, jobManifestName } = require('./generate-idapi-banners/engine')
 const { errorResponse } = require('./utils')
 
@@ -51,5 +51,5 @@ exports.main = async (params) => {
       }
     }
   }
-  return { statusCode: 200, body: publicJob(job) }
+  return { statusCode: 200, body: { ...publicJob(job), outputUrl: outputUrl(job, params) } }
 }

@@ -47,7 +47,38 @@ shows the row count, page count, estimated JPG count, and estimated editable
 INDD count. The page count comes from the pagemap, which is the page contract
 used by the registered InDesign capability.
 
-### Template and pagemap contract
+### Template types
+
+The action renders either an InDesign template (`.indd`, InDesign API) or a Photoshop template
+(`.psd`, Photoshop API v2); the file extension of the template **selected in Assets View** decides
+the path. The selected template's name is passed to the action (`template` parameter), is part of
+the job key, and is the file the engine uses even if the folder holds several. Without a `template`
+parameter the first `*template*.indd|psd` in the folder is used. The "Generate Banners" button only
+appears when exactly one `.indd` or `.psd` is selected.
+
+**PSD templates** use layer names as the contract (text layers and smart objects named like the CSV
+columns, one artboard per size named like the pagemap's `pagename`). Per CSV row the worker makes one
+`POST /v2/create-composite` call that edits every layer and returns one JPG per artboard (plus an
+editable `.psd` when requested). Layer ids come from `/v2/generate-manifest`. Hero smart objects are
+cover-fitted to an InDesign-style photo frame (`PSD_HERO_FRAME_ASPECT`) with the layer mask unlinked.
+The worker has 2048 MB of memory because PSD templates and editable PSD outputs are large. Transient
+Photoshop API errors are retried. See [`../docs/PSD-DESIGN.md`](../docs/PSD-DESIGN.md).
+
+### Output folders
+
+`<folder>/output` is used when empty; otherwise each run goes into a datetime-stamped subfolder
+(`output/YYYY-MM-DD_HHMMSS`, UTC), chosen once per job and stored on it so every batch and retry
+writes to the same place. Missing folders are created on upload. Status responses include
+`outputFolder` and, when `ASSETS_VIEW_TENANT` is set, an `outputUrl` deep link into Assets View.
+
+### Operating notes
+
+- A worker killed mid-run (for example out of memory) leaves the job `running`. After the 16-minute
+  lock window the next start request requeues it; pass `force=1` to the start action to drop the lock
+  and restart immediately (operator escape hatch; the modal never sends it).
+- `_idapi-job.json` writes retry on AEM `409` and never fail a job.
+
+### Template and pagemap contract (InDesign)
 
 The InDesign template must have one page per output artboard. Put Script Labels
 on the actual swappable page items (not only on a group or layer). Label names

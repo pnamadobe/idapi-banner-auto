@@ -17,6 +17,8 @@ const { planRelations, assetId, applyPlan } = require('./relations')
 const { isDeliverable } = require('../job-utils')
 const { remapSources, linksFromIndd } = require('./remap')
 const { damLinksFromTemplate, csvImageRefs, resolveSwappedImages } = require('./links')
+const psd = require('./psd')
+const { classify } = require('./classify')
 const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
 
 // Mint a fresh AEM token from an AEM Service Credential (JWT flow). The whole
@@ -41,13 +43,30 @@ function aemApiPath (author, damPath) {
   return `${author}/api/assets/${rel}.json`
 }
 async function aemList (author, token, damPath) {
-  const res = await fetch(aemApiPath(author, damPath), { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`AEM list ${damPath} -> ${res.status}`)
-  const j = await res.json()
-  return (j.entities || []).map((e) => ({
-    name: e.properties && e.properties.name,
-    isFolder: (e.class || []).join(',').includes('folder')
-  }))
+  // The Assets HTTP API returns one page of entities at a time (a folder with more than
+  // ~20 children silently lost the rest), so page with offset/limit until exhausted.
+  const out = []
+  const seen = new Set()
+  let offset = 0
+  for (let i = 0; i < 100; i++) {
+    const res = await fetch(`${aemApiPath(author, damPath)}?offset=${offset}&limit=100`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`AEM list ${damPath} -> ${res.status}`)
+    const j = await res.json()
+    const ents = j.entities || []
+    if (!ents.length) break
+    let added = 0
+    for (const e of ents) {
+      const name = e.properties && e.properties.name
+      if (seen.has(name)) continue
+      seen.add(name)
+      added++
+      out.push({ name, isFolder: (e.class || []).join(',').includes('folder') })
+    }
+    const total = j.properties && j.properties['srn:paging'] && Number(j.properties['srn:paging'].total)
+    offset += ents.length
+    if (!added || (total && offset >= total)) break
+  }
+  return out
 }
 async function aemListSafe (author, token, damPath) {
   // Optional folders (shared/per-job fonts) may not exist — treat any list
@@ -74,12 +93,32 @@ async function verifyAemAsset (author, token, damPath) {
   }
   throw new Error(`AEM asset ${damPath} was not readable after upload (last status ${lastStatus})`)
 }
+// initiateUpload does not create missing folders (404), so make them first. Creates each
+// missing level via the Assets HTTP API; an already-existing folder is left alone.
+async function ensureFolder (author, token, damPath) {
+  const headers = { Authorization: `Bearer ${token}` }
+  const head = await fetch(aemApiPath(author, damPath), { headers })
+  if (head.ok) return
+  const cut = damPath.lastIndexOf('/')
+  const parent = damPath.slice(0, cut)
+  if (/^\/content\/dam\/.+/.test(parent)) await ensureFolder(author, token, parent)
+  const name = damPath.slice(cut + 1)
+  const rel = damPath.replace(/^\/content\/dam/, '').split('/').map(encodeURIComponent).join('/')
+  const res = await fetch(`${author}/api/assets${rel}`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ class: 'assetFolder', properties: { title: name } })
+  })
+  if (!res.ok && res.status !== 409) throw new Error(`create folder ${damPath} -> ${res.status}`)
+}
 async function aemUpload (author, token, folderDamPath, name, buf, mime) {
-  const ir = await fetch(`${author}${folderDamPath}.initiateUpload.json`, {
+  const initiate = () => fetch(`${author}${folderDamPath.split('/').map(encodeURIComponent).join('/')}.initiateUpload.json`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ fileName: name, fileSize: String(buf.length) })
   })
+  let ir = await initiate()
+  if (ir.status === 404) { await ensureFolder(author, token, folderDamPath); ir = await initiate() }
   if (!ir.ok) throw new Error(`initiateUpload ${name} -> ${ir.status}`)
   const f = (JSON.parse((await ir.text()).replace(/^\)\]\}'?/, '')).files || [])[0]
   if (!f || !f.uploadURIs || !f.uploadURIs.length) throw new Error(`initiateUpload ${name}: no upload URI`)
@@ -100,15 +139,10 @@ async function aemUpload (author, token, folderDamPath, name, buf, mime) {
 
 // ---- classification (folder-as-key contract) ----
 const isFont = (n) => /\.(otf|ttf|ttc|woff2?|dfont)$/i.test(n)
-function classify (entries) {
-  const assets = entries.filter((e) => !e.isFolder)
-  const isCsv = (n) => /\.csv$/i.test(n)
-  const isImg = (n) => /\.(jpe?g|png)$/i.test(n)
-  const template = assets.find((e) => /template/i.test(e.name) && /\.indd$/i.test(e.name))
-  const pagemap = assets.find((e) => /pagemap/i.test(e.name) && isCsv(e.name))
-  const variations = assets.find((e) => isCsv(e.name) && e !== pagemap && !/pagemap/i.test(e.name))
-  const images = assets.filter((e) => isImg(e.name))
-  return { template, variations, pagemap, images }
+function missingMessage (missing, templateName) {
+  return templateName && missing.includes('template')
+    ? `the selected template ${templateName} was not found in the folder (also missing: ${missing.filter((k) => k !== 'template').join(', ') || 'nothing else'})`
+    : `folder is missing required input(s): ${missing.join(', ')}`
 }
 function csvRecords (text) {
   const records = []
@@ -152,19 +186,27 @@ async function aemContext (params) {
 async function inspectInputs (params) {
   const { author, aemToken } = await aemContext(params)
   const entries = await aemList(author, aemToken, params.folder)
-  const c = classify(entries)
+  const c = classify(entries, params.template)
   const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k])
-  if (missing.length) throw new Error(`folder is missing required input(s): ${missing.join(', ')}`)
+  if (missing.length) throw new Error(missingMessage(missing, params.template))
   const templateBuf = await aemDownload(author, aemToken, `${params.folder}/${c.template.name}`)
   const variationsText = (await aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`)).toString('utf8')
   const pagemapText = (await aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)).toString('utf8')
-  await resolveImages(author, params.folder, c, templateBuf, variationsText)
+  if (isPsd(c.template.name)) {
+    // PSD layers are filled from images in the job folder only (no Asset Links).
+    const missingImgs = [...csvImageRefs(csvRecords(variationsText))].filter((n) => !c.images.some((i) => i.name === n))
+    if (missingImgs.length) throw new Error(`image(s) referenced by the CSV were not found in ${params.folder}: ${missingImgs.join(', ')}`)
+  } else {
+    await resolveImages(author, params.folder, c, templateBuf, variationsText)
+  }
   const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
   const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
   return { variationRows, pageCount, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name }
 }
+const isPsd = (name) => /\.psd$/i.test(name || '')
 function destFor (kind, name) {
   if (kind === 'template') return 'template/brand-template.indd'
+  if (kind === 'psd') return 'template/brand-template.psd'
   if (kind === 'variations') return 'input/brand-variations.csv'
   if (kind === 'pagemap') return 'input/pagemap.csv'
   if (kind === 'image') return 'assets/shots/' + name
@@ -177,13 +219,26 @@ function mimeOf (name) {
   if (/\.jpe?g$/i.test(name)) return 'image/jpeg'
   if (/\.png$/i.test(name)) return 'image/png'
   if (/\.indd$/i.test(name)) return 'application/x-indesign'
+  if (/\.psd$/i.test(name)) return 'image/vnd.adobe.photoshop'
   if (/\.json$/i.test(name)) return 'application/json'
   if (/\.txt$/i.test(name)) return 'text/plain'
   return 'application/octet-stream'
 }
 const jobManifestName = '_idapi-job.json'
+// Fresh runs normally land in <folder>/output. If that folder already holds assets
+// (earlier results), put the run in a datetime-stamped subfolder instead so nothing
+// is mixed or overwritten. Chosen once per run and stored on the job, so every batch
+// (and a failed-run retry) writes to the same place.
+async function resolveOutputFolder (params) {
+  const { author, aemToken } = await aemContext(params)
+  const base = params.folder + '/output'
+  const existing = (await aemListSafe(author, aemToken, base)).filter((e) => e.name !== jobManifestName)
+  if (!existing.length) return base
+  const stamp = new Date().toISOString().replace(/\.\d+Z$/, '').replace('T', '_').replace(/:/g, '')
+  return `${base}/${stamp}`
+}
 async function writeJobManifest (author, token, folder, manifest) {
-  await aemUpload(author, token, folder + '/output', jobManifestName, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'), 'application/json')
+  await aemUpload(author, token, manifest.outputFolder || folder + '/output', jobManifestName, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'), 'application/json')
 }
 function truncateCsv (text, n, offset = 0) {
   // Keep quoted newlines intact; the JSX CSV reader accepts RFC-4180 records.
@@ -288,6 +343,140 @@ async function remapLinks (p, tok, aemToken, files, prefix, name, buf, dataSourc
   return { buf: Buffer.from(await (await fetch(out.url)).arrayBuffer()), warnings }
 }
 
+// ---- Photoshop API v2 (PSD templates) ----
+const PS_BASE = (p) => String(p.PS_API_BASE || 'https://photoshop-api.adobe.io').replace(/\/+$/, '')
+async function psToken (p) {
+  const b = new URLSearchParams({ grant_type: 'client_credentials', client_id: p.FFS_CLIENT_ID, client_secret: p.FFS_CLIENT_SECRET, scope: p.PS_SCOPES || 'openid,AdobeID,read_organizations,firefly_api,ff_apis' })
+  const r = await fetch(p.IMS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: b })
+  if (!r.ok) throw new Error(`IMS token (Photoshop) ${r.status}`)
+  return (await r.json()).access_token
+}
+const psH = (p, tok) => ({ Authorization: `Bearer ${tok}`, 'x-api-key': p.FFS_CLIENT_ID, 'Content-Type': 'application/json' })
+// Submit a v2 job and poll /v2/status until it finishes. Returns the final status body.
+// Transient failures (the service fetching one of our presigned URLs, gateway blips) are retried.
+async function psJob (p, tok, path, body) {
+  const transient = /External download failed|\b50[234]\b|timeout|temporarily/i
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await psJobOnce(p, tok, path, body)
+    } catch (e) {
+      if (attempt >= 3 || !transient.test(e.message)) throw e
+      await sleep(5000 * attempt)
+    }
+  }
+}
+async function psJobOnce (p, tok, path, body) {
+  const r = await fetch(PS_BASE(p) + path, { method: 'POST', headers: psH(p, tok), body: JSON.stringify(body) })
+  const text = await r.text()
+  if (r.status !== 202) throw new Error(`photoshop ${path} ${r.status} ${text.slice(0, 500)}`)
+  const statusUrl = JSON.parse(text).statusUrl
+  for (let n = 0; n < 120; n++) {
+    await sleep(n < 3 ? 2000 : 4000)
+    const s = await (await fetch(statusUrl, { headers: psH(p, tok) })).json()
+    if (s.status === 'succeeded') return s
+    if (s.status === 'failed') throw new Error(`photoshop ${path} failed: ${JSON.stringify(s.errorDetails || s).slice(0, 800)}`)
+  }
+  throw new Error(`photoshop ${path} poll timeout`)
+}
+async function psFetchOutput (p, tok, output) {
+  const url = (output.destination || output).url
+  const res = await fetch(url, { headers: psH(p, tok) })
+  if (!res.ok) throw new Error(`photoshop output download -> ${res.status}`)
+  return Buffer.from(await res.arrayBuffer())
+}
+
+// One batch of a PSD job: one create-composite call per CSV row, one JPEG per pagemap artboard.
+async function renderPsdBatch ({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable }) {
+  const staged = []
+  staged.push({ dest: destFor('psd'), buf: await aemDownload(author, aemToken, `${folder}/${c.template.name}`) })
+  let varText = (await aemDownload(author, aemToken, `${folder}/${c.variations.name}`)).toString('utf8')
+  if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
+  const pagemapText = (await aemDownload(author, aemToken, `${folder}/${c.pagemap.name}`)).toString('utf8')
+  const rows = psd.rowsFromRecords(csvRecords(varText))
+  const refs = csvImageRefs(csvRecords(varText))
+  const missingImgs = [...refs].filter((n) => !c.images.some((i) => i.name === n))
+  if (missingImgs.length) throw new Error(`image(s) referenced by the CSV were not found in ${folder}: ${missingImgs.join(', ')}`)
+  const imageDims = new Map()
+  for (const n of refs) {
+    const buf = await aemDownload(author, aemToken, `${folder}/${n}`)
+    const size = psd.imageSize(buf)
+    if (size) imageDims.set(n, size)
+    else logger.warn(`psd: could not read size of ${n}; it will be fitted, not cover-filled`)
+    staged.push({ dest: destFor('image', n), buf })
+  }
+  const fontSources = [params.AEM_FONTS_PATH || '/content/dam/fonts', folder + '/fonts']
+  const fontByName = new Map()
+  for (const fp of fontSources) {
+    for (const e of await aemListSafe(author, aemToken, fp)) if (!e.isFolder && isFont(e.name)) fontByName.set(e.name, fp + '/' + e.name)
+  }
+  for (const [fname, fpath] of fontByName) staged.push({ dest: destFor('font', fname), buf: await aemDownload(author, aemToken, fpath) })
+  logger.info(`psd: ${rows.length} row(s), ${refs.size} image(s), ${fontByName.size} font(s)`)
+
+  const { assets, files, prefix } = await stageInputs(staged)
+  staged.length = 0 // everything is in I/O Files now; free the buffers (the PSD alone is ~60 MB)
+  const urlOf = new Map(assets.map((a) => [a.destination, a.source.url]))
+  const tok = await psToken(params)
+
+  // Layer ids come from the manifest (names repeat across artboards).
+  const manifestRes = await psJob(params, tok, '/v2/generate-manifest', { image: { source: { url: urlOf.get(destFor('psd')) } }, extractSmartObjectData: true, outputs: [{ destination: { validityPeriod: 3600 }, mediaType: 'application/json' }] })
+  const manifest = JSON.parse((await psFetchOutput(params, tok, manifestRes.result.outputs[0])).toString('utf8'))
+  const all = psd.artboardsFromManifest(manifest)
+  const { selected, missing } = psd.selectArtboards(all, psd.pagemapNames(csvRecords(pagemapText)))
+  if (missing.length) throw new Error(`pagemap lists artboard(s) not found in the PSD: ${missing.join(', ')}`)
+  if (!selected.length) throw new Error('no artboards selected: the pagemap names no artboard in the PSD')
+  const cols = rows.length ? psd.mapColumns(Object.keys(rows[0]), selected) : { unmatched: [] }
+  if (cols.unmatched.length) logger.warn(`psd: CSV column(s) with no matching layer: ${cols.unmatched.join(', ')}`)
+
+  const outFolder = (job && job.outputFolder) || folder + '/output'
+  const written = []
+  const psdRecords = []
+  for (let i = 0; i < rows.length; i++) {
+    const body = psd.buildComposite({
+      sourceUrl: urlOf.get(destFor('psd')),
+      fontUrls: [...fontByName.keys()].map((n) => urlOf.get(destFor('font', n))),
+      artboards: selected,
+      row: rows[i],
+      imageUrl: (name) => urlOf.get(destFor('image', name)),
+      imageDims: (name) => imageDims.get(name) || null,
+      includePsd: writeEditable,
+      // Photo-frame aspect of the matching InDesign template (default 1700/688); 0 disables
+      heroFrameAspect: params.PSD_HERO_FRAME_ASPECT === undefined || params.PSD_HERO_FRAME_ASPECT === '' ? 1700 / 688 : Number(params.PSD_HERO_FRAME_ASPECT)
+    })
+    logger.info(`psd: rendering row ${rowOffset + i + 1} (${body.edits.layers.length} edits, ${body.outputs.length} outputs)`)
+    const res = await psJob(params, tok, '/v2/create-composite', body)
+    const outs = res.result.outputs || []
+    for (let k = 0; k < selected.length; k++) {
+      const name = psd.outputName(selected[k], rows[i], rowOffset + i)
+      await aemUpload(author, aemToken, outFolder, name, await psFetchOutput(params, tok, outs[k]), mimeOf(name))
+      written.push(name)
+    }
+    if (writeEditable) {
+      // Editable PSD (all artboards) for this row; remember which job-folder images it uses for relations.
+      const name = psd.psdOutputName(rows[i], rowOffset + i)
+      await aemUpload(author, aemToken, outFolder, name, await psFetchOutput(params, tok, outs[selected.length]), mimeOf(name))
+      written.push(name)
+      psdRecords.push({ name, imageNames: [...new Set(Object.values(rows[i]).filter(psd.isImageCell).map((v) => String(v).trim().split('/').pop()))] })
+    }
+  }
+  // AEM relations (Assets View shows these): template -> PSD (derived) and PSD <-> its replaced images (other).
+  let relationsCreated = 0
+  const relationWarnings = []
+  if (psdRecords.length) {
+    try {
+      const ids = new Map()
+      const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
+      const records = []
+      for (const r of psdRecords) records.push({ inddId: await idOf(`${outFolder}/${r.name}`), imageIds: await Promise.all(r.imageNames.map((n) => idOf(`${folder}/${n}`))) })
+      const res = await applyPlan(author, aemToken, planRelations(await idOf(`${folder}/${c.template.name}`), records))
+      relationsCreated = res.created
+      relationWarnings.push(...res.warnings)
+    } catch (e) { relationWarnings.push(e.message) }
+    if (relationWarnings.length) logger.warn(`relation warnings: ${relationWarnings.join(' | ')}`)
+  }
+  try { await files.delete(`${prefix}/`) } catch (e) { logger.warn(`staging cleanup failed: ${e.message}`) }
+  return { written, varText, fonts: fontByName.size, outFolder, unmatched: cols.unmatched, relationsCreated, relationWarnings }
+}
+
 // ---------------------------------------------------------------------------
 async function processBatch (params, job, state) {
   const logger = Core.Logger('main', { level: params.LOG_LEVEL || 'info' })
@@ -306,9 +495,31 @@ async function processBatch (params, job, state) {
     // 1. read + classify the AEM folder
     logger.info(`reading AEM folder ${folder}`)
     const entries = await aemList(author, aemToken, folder)
-    const c = classify(entries)
+    const c = classify(entries, params.template)
     const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k])
-    if (missing.length) return errorResponse(400, `folder is missing required input(s): ${missing.join(', ')}`, logger)
+    if (missing.length) return errorResponse(400, missingMessage(missing, params.template), logger)
+
+    if (isPsd(c.template.name)) {
+      const r = await renderPsdBatch({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable: /^(1|true|yes)$/i.test(String(params.writeIndd || '')) })
+      if (state && job) {
+        const completed = new Set(job.outputs || [])
+        r.written.forEach((name) => completed.add(name))
+        job.outputs = Array.from(completed)
+        job.lastBatchCount = r.written.length
+        await state.put(job.stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+      }
+      return {
+        statusCode: 200,
+        body: {
+          folder, outputFolder: r.outFolder, template: c.template.name, variations: c.variations.name, fonts: r.fonts,
+          count: r.written.filter(isDeliverable).length,
+          batchRows: Math.max(0, csvRecords(r.varText).length - 1),
+          remapWarnings: [], relationsCreated: r.relationsCreated,
+          relationWarnings: [...r.relationWarnings, ...(r.unmatched.length ? [`CSV column(s) with no matching layer: ${r.unmatched.join(', ')}`] : [])],
+          outputs: r.written
+        }
+      }
+    }
 
     // 2. pull inputs → buffers, mapped to render destinations
     const staged = []
@@ -354,7 +565,7 @@ async function processBatch (params, job, state) {
     const outputs = await indesignRender(params, idTok, assets, { writeIndd })
 
     // 5. write outputs back to AEM <folder>/output (unpublished → review)
-    const outFolder = folder + '/output'
+    const outFolder = (job && job.outputFolder) || folder + '/output'
     logger.info(`writing ${outputs.length} outputs to ${outFolder}`)
     const written = []
     const remapWarnings = []
@@ -435,7 +646,7 @@ async function processBatch (params, job, state) {
         variations: c.variations.name,
         fonts: fontByName.size,
         count: written.filter(isDeliverable).length,
-        batchRows: varText.trim() ? Math.max(0, varText.trim().split(/\r?\n/).length - 1) : 0,
+        batchRows: Math.max(0, csvRecords(varText).length - 1),   // records, not lines: quoted cells may contain line breaks (cardname)
         remapWarnings,
         relationsCreated,
         relationWarnings,
@@ -450,7 +661,10 @@ async function processBatch (params, job, state) {
 
 exports.processBatch = processBatch
 exports.inspectInputs = inspectInputs
+exports.resolveOutputFolder = resolveOutputFolder
 exports.aemContext = aemContext
+exports.ensureFolder = ensureFolder
+exports.aemUpload = aemUpload
 exports.aemDownload = aemDownload
 exports.writeJobManifest = writeJobManifest
 exports.jobManifestName = jobManifestName

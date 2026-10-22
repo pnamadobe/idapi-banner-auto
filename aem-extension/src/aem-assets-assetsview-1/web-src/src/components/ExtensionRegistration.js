@@ -26,6 +26,28 @@ function findAemAuthorUrl(...sources) {
   return sources.map(visit).find(Boolean) || '';
 }
 
+const TEMPLATE_RE = /\.(indd|psd)$/i;
+
+// resourceSelection is documented as { resources: [{ id, path }, …] }.
+function selectionPaths(resourceSelection) {
+  const sel = (resourceSelection && Array.isArray(resourceSelection.resources))
+    ? resourceSelection.resources
+    : (Array.isArray(resourceSelection) ? resourceSelection
+      : (resourceSelection ? [resourceSelection] : []));
+  return sel.map((r) => String(
+    (r && (r.path || r.id || r.repositoryPath || r['repo:path'] || r.name ||
+      (r.repositoryMetadata && (r.repositoryMetadata['repo:path'] || r.repositoryMetadata.path)))) || ''
+  ));
+}
+
+// The user selects the .indd / .psd template; its parent folder is the "job key"
+// (holds the CSVs + images). Returns '' when no template is selected.
+function selectedTemplatePath(resourceSelection) {
+  // Exactly one template: with several selected it would be ambiguous which one to run.
+  const templates = selectionPaths(resourceSelection).filter((p) => TEMPLATE_RE.test(p));
+  return templates.length === 1 ? templates[0] : '';
+}
+
 function ExtensionRegistration() {
   const init = async () => {
     const guestConnection = await register({
@@ -34,26 +56,17 @@ function ExtensionRegistration() {
         actionBar: {
           async getActions({ context, resourceSelection }) {
             try { console.log('[idapi] getActions context=', JSON.stringify(context), 'resourceSelection=', JSON.stringify(resourceSelection)); } catch (e) { console.log('[idapi] getActions', context, resourceSelection); }
+            // Only offer the action when an .indd or .psd template is selected.
+            const template = selectedTemplatePath(resourceSelection);
+            console.log('[idapi v2] template selected:', template || 'none', '->', template ? 'show button' : 'hide button');
+            if (!template) return [];
             return [
               {
                 'id': 'indesign-banners-generation',
                 'icon': 'AdDisplay',
                 'label': 'Generate Banners',
                 'onClick': async () => {
-                  // The user selects the .indd template; its parent folder is the
-                  // "job key" (holds the CSVs + images). Derive both from the selection.
-                  // resourceSelection is documented as { resources: [{ id, path }, …] }.
-                  const sel = (resourceSelection && Array.isArray(resourceSelection.resources))
-                    ? resourceSelection.resources
-                    : (Array.isArray(resourceSelection) ? resourceSelection
-                      : (resourceSelection ? [resourceSelection] : []));
-                  const pathOf = (r) => String(
-                    (r && (r.path || r.id || r.repositoryPath || r['repo:path'] ||
-                      (r.repositoryMetadata && (r.repositoryMetadata['repo:path'] || r.repositoryMetadata.path)))) || ''
-                  );
-                  let assetPath = '';
-                  for (const r of sel) { const p = pathOf(r); if (/\.indd$/i.test(p)) { assetPath = p; break; } }
-                  if (!assetPath && sel.length) assetPath = pathOf(sel[0]);
+                  let assetPath = selectedTemplatePath(resourceSelection);
                   // strip any urn/scheme prefix so we get a /content/dam/... path
                   const dam = assetPath.indexOf('/content/dam');
                   if (dam > 0) assetPath = assetPath.slice(dam);
@@ -70,7 +83,7 @@ function ExtensionRegistration() {
                   try { localStorage.setItem('idapi_job', JSON.stringify(job)); } catch (e) {}
                   const qs = `folder=${encodeURIComponent(folder)}&template=${encodeURIComponent(templateName)}&aemAuthorUrl=${encodeURIComponent(aemAuthorUrl)}`;
                   guestConnection.host.modal.openDialog({
-                    title: 'Banners from InDesign template',
+                    title: 'Banners from template',
                     // cache-bust index.html at runtime so the modal iframe always
                     // loads the current bundle (adobeio-static caches index.html)
                     contentUrl: `/index.html?cb=${Date.now()}#modal-indesign-banners-generation?${qs}`,

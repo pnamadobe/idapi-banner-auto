@@ -10,6 +10,7 @@ import {
 } from '@adobe/react-spectrum';
 
 import { extensionId } from './Constants';
+import Confetti from './Confetti';
 import actionWebInvoke from '../utils';
 import actionsConfig from '../config.json';
 
@@ -33,8 +34,9 @@ function resolveActionUrl(action = 'generate-idapi-banners') {
   return hit ? hit[1] : null;
 }
 
-async function deterministicJobId(folder, writeIndd) {
-  const input = new TextEncoder().encode(`${folder}|${writeIndd ? '1' : '0'}`);
+async function deterministicJobId(folder, writeIndd, template) {
+  // must match keyFor() in actions/job-utils.js
+  const input = new TextEncoder().encode(`${folder}|${writeIndd ? '1' : '0'}${template ? `|${template}` : ''}`);
   const digest = await crypto.subtle.digest('SHA-256', input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 48);
 }
@@ -49,6 +51,7 @@ export default function ModalIndesignBannersGeneration() {
   const [error, setError] = useState('');
   const [estimate, setEstimate] = useState(null);
   const [estimateError, setEstimateError] = useState('');
+  const [confetti, setConfetti] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -62,14 +65,14 @@ export default function ModalIndesignBannersGeneration() {
     if (!folder) return;
     const url = resolveActionUrl();
     if (!url) return;
-    actionWebInvoke(url, {}, { folder, aemAuthorUrl, preflight: '1' })
+    actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, preflight: '1' })
       .then((res) => {
         const body = res && res.body ? res.body : res;
         if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || 'Unable to inspect inputs');
         setEstimate(body);
       })
       .catch((e) => setEstimateError(String(e.message || e)));
-  }, [folder, aemAuthorUrl]);
+  }, [folder, template, aemAuthorUrl]);
 
   // Key on the job id, not the result object: each poll replaces `result`, which would
   // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
@@ -92,6 +95,7 @@ export default function ModalIndesignBannersGeneration() {
         if (cancelled) return;
         setResult(body);
         if (body.status === 'completed') {
+          setConfetti(true);
           setStatus('done');
         } else if (body.status === 'failed') {
           setError(`Job ${body.jobId} failed: ${body.error || 'The worker reported a failure.'}`);
@@ -117,7 +121,7 @@ export default function ModalIndesignBannersGeneration() {
     // a spinner: race a short window to surface fast failures (auth/missing inputs);
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
-    const call = actionWebInvoke(url, {}, { folder, aemAuthorUrl, writeIndd: writeIndd ? '1' : '' })
+    const call = actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, writeIndd: writeIndd ? '1' : '' })
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
     const outcome = await Promise.race([
@@ -125,7 +129,7 @@ export default function ModalIndesignBannersGeneration() {
       new Promise((res) => setTimeout(() => res({ started: true }), 6000)),
     ]);
     if (outcome.started) {
-      setResult({ jobId: await deterministicJobId(folder, writeIndd) });
+      setResult({ jobId: await deterministicJobId(folder, writeIndd, template) });
       setStatus('started');
       return;
     }
@@ -142,7 +146,7 @@ export default function ModalIndesignBannersGeneration() {
       <View padding="size-250">
         {!folder && (
           <Flex direction="column" gap="size-150">
-            <Text>Couldn't determine the job folder from your selection. Select an InDesign template (<code>.indd</code>) inside a job folder and try again.</Text>
+            <Text>Couldn't determine the job folder from your selection. Select a template (<code>.indd</code> or <code>.psd</code>) inside a job folder and try again.</Text>
             <Text>Debug (what the extension received):</Text>
             <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-3000" overflow="auto">
               <Text><b>assetPath:</b> {String(job.assetPath)}</Text><br/>
@@ -163,12 +167,12 @@ export default function ModalIndesignBannersGeneration() {
               </Flex>
             </View>
             <Text>
-              The folder's variations CSV, pagemap CSV, and images will be rendered by the
-              Adobe InDesign API. Results land in <b>{folder}/output</b> — unpublished, for your review.
+              The folder's variations CSV, pagemap CSV, and images will be rendered by Adobe Creative Cloud services.
+              Results land in <b>{folder}/output</b> (in a datetime-stamped subfolder if it already has assets) — unpublished, for your review.
             </Text>
             <Text>
-              Choose <b>Generate banners</b> for images only, or <b>+ editable InDesign</b> to also
-              write a reopenable <code>.indd</code> per variation (larger output).
+              Choose <b>Generate banners</b> for images only, or <b>+ editable file</b> to also
+              write a reopenable {/\.psd$/i.test(template) ? 'PSD' : 'INDD'} per variation (larger output).
             </Text>
             {estimate && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -176,7 +180,7 @@ export default function ModalIndesignBannersGeneration() {
                   <Text><b>Rows to execute:</b> {estimate.variationRows}</Text>
                   <Text><b>Template pages:</b> {estimate.pageCount} (from pagemap)</Text>
                   <Text><b>Estimated images:</b> {estimate.variationRows * estimate.pageCount} JPGs</Text>
-                  <Text><b>Estimated editable files:</b> {estimate.variationRows} INDDs when selected</Text>
+                  <Text><b>Estimated editable files:</b> {estimate.variationRows} {/\.psd$/i.test(template) ? 'PSDs' : 'INDDs'} when selected</Text>
                 </Flex>
               </View>
             )}
@@ -184,7 +188,7 @@ export default function ModalIndesignBannersGeneration() {
             {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
             <ButtonGroup orientation="vertical" width="100%">
               <Button variant="accent" width="100%" onPress={() => generate(false)}>Generate banners</Button>
-              <Button variant="primary" width="100%" onPress={() => generate(true)}>Generate banners + editable InDesign</Button>
+              <Button variant="primary" width="100%" onPress={() => generate(true)}>Generate banners + editable file</Button>
               <Button variant="secondary" width="100%" onPress={close}>Cancel</Button>
             </ButtonGroup>
           </Flex>
@@ -201,8 +205,8 @@ export default function ModalIndesignBannersGeneration() {
           <Flex direction="column" gap="size-150">
             <Heading level={3}>✓ Generation started</Heading>
             <Text>
-              Your banners are rendering on the Adobe InDesign API and will appear in
-              <b> {folder}/output</b> in a few minutes — unpublished, ready for your review.
+              Your banners are rendering on the {/\.psd$/i.test(template) ? 'Adobe Photoshop API' : 'Adobe InDesign API'} and will appear in
+              <b> {(result && result.outputFolder) || `${folder}/output`}</b> in a few minutes — unpublished, ready for your review.
               You can close this dialog; the job keeps running in the background.
             </Text>
             {result && (
@@ -212,6 +216,9 @@ export default function ModalIndesignBannersGeneration() {
                   <Text><b>Verified outputs:</b> {result.count || 0}</Text>
                 </Flex>
               </View>
+            )}
+            {result && result.outputUrl && (
+              <Text><a href={result.outputUrl} target="_blank" rel="noopener noreferrer">Open the output folder in Assets View ↗</a></Text>
             )}
             {result && result.jobId && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -231,10 +238,12 @@ export default function ModalIndesignBannersGeneration() {
             <Heading level={3}>Generation failed</Heading>
             <Text>{error}</Text>
             {result && result.jobId && <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>}
-            <Text>Check the job manifest in <b>{folder}/output/_idapi-job.json</b>, then retry after correcting the reported issue.</Text>
+            <Text>Check the job manifest in <b>{(result && result.outputFolder) || `${folder}/output`}/_idapi-job.json</b>, then retry after correcting the reported issue.</Text>
             <ButtonGroup><Button variant="accent" onPress={close}>Close</Button></ButtonGroup>
           </Flex>
         )}
+
+        {confetti && <Confetti onDone={() => setConfetti(false)} />}
 
         {status === 'done' && result && (
           <Flex direction="column" gap="size-150">
@@ -245,6 +254,9 @@ export default function ModalIndesignBannersGeneration() {
                 : 'The generation completed successfully.'}
               {' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.
             </Text>
+            {result.outputUrl && (
+              <Text><a href={result.outputUrl} target="_blank" rel="noopener noreferrer">Open the output folder in Assets View ↗</a></Text>
+            )}
             {result.jobId && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
                 <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
