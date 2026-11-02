@@ -374,7 +374,14 @@ The AEM extension starts a durable job in App Builder State and processes the va
 ## AEM Assets View preview
 
 The modal preflight shows the selected template, job folder, CSV row count,
-template page count, and estimated output totals before starting a render:
+template page count, and estimated output totals before starting a render. It also
+lists any problems it found (missing or mistyped images, duplicate or unsafe output
+names, a pagemap that does not match the template, and so on) and blocks generation
+until they are fixed or explicitly overridden. For `.indd` templates the first batch also
+checks, inside InDesign, that every CSV column has a Script Label, fonts and links resolve and
+every image the CSV names exists (these checks need the capability script re-registered, see
+`SETUP.md` Part 6). See the Preflight section of
+[`aem-extension/README.md`](aem-extension/README.md).
 
 ![Generate Banners modal showing render estimates](docs/images/idapi-banners-modal.png)
 

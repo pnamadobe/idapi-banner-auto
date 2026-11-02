@@ -102,3 +102,15 @@ describe('output modes', () => {
     expect(keyFor('/f', true, 'a.psd', false)).toBe(keyFor('/f', true, 'a.psd'))
   })
 })
+
+describe('publicJob findings', () => {
+  const { publicJob } = require('../actions/job-utils')
+  const finding = { severity: 'error', code: 'IMG_MISSING', message: 'row 2: hero "x.jpg" was not found' }
+  test('findings are exposed when present', () => {
+    expect(publicJob({ jobId: 'j', status: 'failed', findings: [finding] }).findings).toEqual([finding])
+  })
+  test('no findings field when none or empty', () => {
+    expect(publicJob({ jobId: 'j', status: 'running' })).not.toHaveProperty('findings')
+    expect(publicJob({ jobId: 'j', status: 'running', findings: [] })).not.toHaveProperty('findings')
+  })
+})

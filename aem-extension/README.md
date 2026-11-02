@@ -47,6 +47,62 @@ shows the row count, page count, estimated JPG count, and estimated editable
 INDD count. The page count comes from the pagemap, which is the page contract
 used by the registered InDesign capability.
 
+### Preflight
+
+The same checks run in the modal (`preflight=1`) and, authoritatively, in the start action, so a
+stale modal or a direct API call cannot skip them. They are brand-agnostic: nothing depends on
+column or layer names, only on the CSV, the pagemap, the images they reference, and (PSD) the
+template's own layers. The pure rules live in `actions/generate-idapi-banners/preflight.js`.
+
+Findings are `{severity: 'error'|'warn', code, message, row?, column?}`. **Errors** are problems
+that would make rows fail or overwrite each other; **warnings** are worth a look but do not block.
+
+| Area | Errors | Warnings |
+| --- | --- | --- |
+| Inputs | `INPUT_MISSING` (template / variations CSV / pagemap not in the folder) | |
+| CSV shape | `CSV_NO_ROWS`, `CSV_HEADER_EMPTY`, `CSV_HEADER_DUP`, `CSV_RAGGED` | `CSV_BOM`, `CELL_EMPTY`, `VOLUME_HIGH` |
+| Output names | `OUTNAME_EMPTY`, `OUTNAME_UNSAFE`, `OUTNAME_DUP` (duplicates silently overwrite) | `OUTNAME_COLUMN_CASE` |
+| Images referenced by the CSV | `IMG_MISSING`, `IMG_CASE_ONLY`, `IMG_AMBIGUOUS`, `IMG_INVALID`, `IMG_EMPTY` (0 bytes), `IMG_TEXT_MISSING` (a value in a text column that looks like an image file but is not in the folder) | `IMG_IN_TEXT`, `IMG_UNREADABLE`, `IMG_UNCHECKED`, `IMG_NOT_IMAGE` |
+| Pagemap | `PAGEMAP_EMPTY`, `PAGEMAP_BAD`, `PAGEMAP_DUP`, `PAGEMAP_COUNT` | `PAGEMAP_BLANK_NAME` |
+| PSD template (first batch) | `PSD_NO_ARTBOARDS`, `PSD_PAGEMAP_MISSING`, `PSD_NO_SELECTION`, `PSD_COLUMN_UNMATCHED`, `PSD_IMAGE_IN_TEXT_LAYER` | `PSD_TEXT_IN_IMAGE_LAYER`, `PSD_FONT_MISSING` |
+| INDD template (first batch, inside InDesign) | `INDD_LABEL_UNMATCHED` (CSV column with no Script Label), `INDD_IMG_MISSING` (an image the CSV names that does not exist; otherwise typeset as text), `INDD_PAGEMAP_COUNT`, `INDD_PAGENAME_DUP`, `INDD_FONT_MISSING`, `INDD_LINK_MISSING` | `INDD_FONT_UNKNOWN` |
+
+`IMG_CASE_ONLY` is an error rather than a warning because image matching is exact: a name that
+differs only by case would not resolve when the job runs.
+
+**Stage 1** (everything except the PSD rows) needs only AEM and runs before a job is created or
+requeued. When it finds errors the start action returns HTTP 422 `{error, findings}` and creates
+nothing; the modal shows the findings (errors first, then warnings, ten at a time) and disables the
+Generate buttons. Ticking **Generate anyway** sends `preflightOverride=1`, which starts the job
+regardless; the findings are still stored on it. An inspection that itself fails (for example AEM
+being unreachable) does not block the start. The "already running" response is unchanged.
+
+**Stage 2** (PSD) runs once, in the first batch, after the layer manifest is read and before the
+first `create-composite` call, so nothing is rendered or billed for a template that cannot match
+the CSV. A failure ends the job with the findings on `job.findings`; `preflightOverride=1` skips
+the gate. The job's findings (capped at 40) are included in the status action's response.
+
+**Stage 2** (INDD) runs inside the registered InDesign capability script
+(`scripts/generate_variations.jsx`), once, in the first batch, before the first variation is
+rendered. The Node side sends `preflightGate=1` (plus `preflightOverride=1` when overridden) only
+when `rowOffset` is 0. On errors the script fails with `PREFLIGHT:[<findings json>]`; the engine
+parses that defensively (only well-formed `INDD_*` findings are kept, with bounded text) and ends
+the job with the findings on `job.findings`. On success the script echoes warnings (and overridden
+errors) in `result.json` under `preflight.findings`, which are merged onto the job. A crash inside
+the gate only adds a warning; it never blocks the render. `INDD_IMG_MISSING` is the catch-all for
+images: the script's `setField` would otherwise typeset a missing image name as text.
+
+**The capability script must be re-registered for the INDD checks to take effect:** set a new
+`CAPABILITY_VERSION` in `cloud/.env`, run `node cloud/run.mjs --register`, put the new execution URL
+in `INDESIGN_EXECUTE_URL` (in both `.env` files, if it changed) and redeploy. An older registered script ignores `preflightGate`, so
+INDD templates then get the stage-1 checks only. Desktop runs of the script never pass the flag and
+behave as before.
+
+Tests: `test/preflight.test.js` (rules, using the CSVs in `test/fixtures/preflight/`),
+`test/preflight-gate-index.test.js` (the 422 / override behaviour) and
+`test/preflight-gate-psd.test.js` (the PSD gate) and `test/preflight-gate-indd.test.js` (the INDD
+gate protocol and `PREFLIGHT:` parsing; the script itself is not run by Jest).
+
 ### Template types
 
 The action renders either an InDesign template (`.indd`, InDesign API) or a Photoshop template

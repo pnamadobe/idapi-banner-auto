@@ -3,10 +3,10 @@
  * Confirms the job folder derived from the selected template, calls the
  * generate-idapi-banners Runtime action, and shows progress + results.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { attach } from '@adobe/uix-guest';
 import {
-  Flex, Provider, defaultTheme, Text, Heading, ButtonGroup, Button, View, ProgressCircle
+  Flex, Provider, defaultTheme, Text, Heading, ButtonGroup, Button, View, ProgressCircle, Checkbox
 } from '@adobe/react-spectrum';
 
 import { extensionId } from './Constants';
@@ -41,6 +41,30 @@ async function deterministicJobId(folder, mode, template) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 48);
 }
 
+const MAX_SHOWN_FINDINGS = 10;
+
+// Errors first, then warnings; the start action's 422 and the preflight estimate share this shape.
+function FindingsPanel({ findings }) {
+  const errors = findings.filter((f) => f.severity === 'error');
+  const warnings = findings.filter((f) => f.severity !== 'error');
+  const shown = [...errors, ...warnings].slice(0, MAX_SHOWN_FINDINGS);
+  const more = errors.length + warnings.length - shown.length;
+  const heading = errors.length
+    ? `Preflight found ${errors.length} problem${errors.length === 1 ? '' : 's'} that will make the generation fail`
+    : `Preflight found ${warnings.length} warning${warnings.length === 1 ? '' : 's'} — generation can still be started`;
+  return (
+    <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-3000" overflow="auto">
+      <Flex direction="column" gap="size-75">
+        <Text><b>{heading}</b></Text>
+        {shown.map((f, i) => (
+          <Text key={`${f.code}-${i}`}>{f.severity === 'error' ? '✖' : '⚠'} {f.message}</Text>
+        ))}
+        {more > 0 && <Text>…and {more} more</Text>}
+      </Flex>
+    </View>
+  );
+}
+
 export default function ModalIndesignBannersGeneration() {
   const [guestConnection, setGuestConnection] = useState();
   const [colorScheme, setColorScheme] = useState('light');
@@ -52,6 +76,9 @@ export default function ModalIndesignBannersGeneration() {
   const [error, setError] = useState('');
   const [estimate, setEstimate] = useState(null);
   const [estimateError, setEstimateError] = useState('');
+  const [findings, setFindings] = useState([]);
+  const [override, setOverride] = useState(false);
+  const notFoundPolls = useRef(0);
   const [confetti, setConfetti] = useState(false);
 
   useEffect(() => {
@@ -62,18 +89,23 @@ export default function ModalIndesignBannersGeneration() {
     })();
   }, []);
 
-  useEffect(() => {
-    if (!folder) return;
+  const hasErrors = findings.some((f) => f.severity === 'error');
+
+  const inspect = () => {
     const url = resolveActionUrl();
-    if (!url) return;
-    actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, preflight: '1' })
+    if (!folder || !url) return Promise.resolve();
+    return actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, preflight: '1' })
       .then((res) => {
         const body = res && res.body ? res.body : res;
         if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || 'Unable to inspect inputs');
         setEstimate(body);
+        setFindings(Array.isArray(body && body.findings) ? body.findings : []);
+        setEstimateError('');
       })
       .catch((e) => setEstimateError(String(e.message || e)));
-  }, [folder, template, aemAuthorUrl]);
+  };
+
+  useEffect(() => { inspect(); }, [folder, template, aemAuthorUrl]);
 
   // Key on the job id, not the result object: each poll replaces `result`, which would
   // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
@@ -94,6 +126,7 @@ export default function ModalIndesignBannersGeneration() {
           throw new Error(res.error || `status action returned ${res.statusCode}`);
         }
         if (cancelled) return;
+        notFoundPolls.current = 0;
         setResult(body);
         if (body.status === 'completed') {
           setConfetti(true);
@@ -103,7 +136,22 @@ export default function ModalIndesignBannersGeneration() {
           setStatus('error');
         }
       } catch (e) {
-        if (!cancelled) setError(`Job ${jobId} started, but status could not be checked: ${String(e.message || e)}`);
+        if (cancelled) return;
+        const msg = String(e.message || e);
+        // The start action rejects a job that fails preflight before creating it, so a job that
+        // is still unknown after a couple of polls means it was never started (the 422 arrived
+        // after the modal's 6s wait). Re-run the inspection so the findings are shown.
+        notFoundPolls.current += 1;
+        if (/job not found/i.test(msg)) {
+          if (notFoundPolls.current >= 2) {
+            cancelled = true;
+            setResult(null);
+            setError('Generation was not started — preflight found problems. Review them below, fix the inputs, or choose to generate anyway.');
+            inspect().then(() => setStatus('idle'));
+          }
+          return;
+        }
+        setError(`Job ${jobId} started, but status could not be checked: ${msg}`);
       }
     };
     check();
@@ -117,13 +165,16 @@ export default function ModalIndesignBannersGeneration() {
   async function generate(mode = 'images') {
     setStatus('running');
     setError('');
+    notFoundPolls.current = 0;
     const url = resolveActionUrl();
     if (!url) { setError('Action URL not found — deploy the app so config.json is populated.'); setStatus('error'); return; }
     // The render runs for minutes server-side. Fire it and DON'T chain the user to
     // a spinner: race a short window to surface fast failures (auth/missing inputs);
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
-    const call = actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'images' ? '' : '1' })
+    const params = { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'images' ? '' : '1' };
+    if (override && hasErrors) params.preflightOverride = '1';
+    const call = actionWebInvoke(url, {}, params)
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
     const outcome = await Promise.race([
@@ -137,6 +188,13 @@ export default function ModalIndesignBannersGeneration() {
     }
     if (outcome.err) { setError(String((outcome.err && outcome.err.message) || outcome.err)); setStatus('error'); return; }
     const res = outcome.r;
+    // 422: the start action refused the job because preflight found errors; show them in place.
+    if (res && res.error && Array.isArray(res.findings)) {
+      setFindings(res.findings);
+      setOverride(false);
+      setStatus('idle');
+      return;
+    }
     if (res && (res.error || (res.statusCode && res.statusCode >= 400))) { setError(res.error || ('action returned ' + res.statusCode)); setStatus('error'); return; }
     const body = res && res.body ? res.body : res;
     setResult(body);
@@ -189,10 +247,17 @@ export default function ModalIndesignBannersGeneration() {
             )}
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
+            {error && <Text><b>{error}</b></Text>}
+            {findings.length > 0 && <FindingsPanel findings={findings} />}
+            {hasErrors && (
+              <Checkbox isSelected={override} onChange={setOverride}>
+                Generate anyway (the problems above will probably make some or all banners fail)
+              </Checkbox>
+            )}
             <ButtonGroup orientation="vertical" width="100%">
-              <Button variant="accent" width="100%" onPress={() => generate('images')}>Generate banners</Button>
-              <Button variant="primary" width="100%" onPress={() => generate('both')}>Generate banners + editable file</Button>
-              <Button variant="primary" width="100%" onPress={() => generate('editable')}>Editable {editableKind}s only (no flattened images)</Button>
+              <Button variant="accent" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('images')}>Generate banners</Button>
+              <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('both')}>Generate banners + editable file</Button>
+              <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('editable')}>Editable {editableKind}s only (no flattened images)</Button>
               <Button variant="secondary" width="100%" onPress={close}>Cancel</Button>
             </ButtonGroup>
           </Flex>

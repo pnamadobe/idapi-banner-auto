@@ -22,7 +22,8 @@ const publicJob = (job) => ({
   outputFolder: job.outputFolder || (job.folder ? `${job.folder}/output` : undefined),
   status: job.status,
   count: (job.outputs || []).filter(isDeliverable).length,
-  error: job.error
+  error: job.error,
+  ...(job.findings && job.findings.length ? { findings: job.findings } : {})
 })
 
 // Assets View deep link to the job's output folder. Needs ASSETS_VIEW_TENANT (the "@org" slug in

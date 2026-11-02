@@ -7,6 +7,7 @@ const { Core } = require('@adobe/aio-sdk')
 const { errorResponse, stringParameters, checkMissingRequestInputs } = require('../utils')
 const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = require('../job-utils')
 const { inspectInputs, resolveOutputFolder } = require('./engine')
+const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
 
 const ttl = 7 * 24 * 3600
 
@@ -36,6 +37,27 @@ async function main (params) {
       const estimate = await inspectInputs({ ...params, template })
       return { statusCode: 200, body: estimate }
     }
+    // Preflight gate: errors stop the start (HTTP 422) unless preflightOverride=1. Not run for a job that
+    // is already queued or running (that request only reports it). An inspection that itself fails
+    // (e.g. AEM unreachable) does not block; the worker reports such failures on the job.
+    const override = /^(1|true|yes)$/i.test(String(params.preflightOverride || ''))
+    let checked = null
+    const gate = async () => {
+      try {
+        checked = await inspectInputs({ ...params, template })
+      } catch (e) {
+        logger.warn(`preflight could not run: ${e.message}`)
+        return null
+      }
+      if (checked.ok || override) return null
+      return { statusCode: 422, body: { error: summarize(checked.findings), findings: checked.findings } }
+    }
+    // Findings kept on the job: shown by the status action, and the worker's stage-2 gate honours the override.
+    const stamp = (job) => {
+      job.preflightOverride = override
+      delete job.findings
+      if (checked) job.findings = checked.findings.slice(0, MAX_STORED_FINDINGS)
+    }
     const state = await stateLib.init()
     const { editable: writeIndd, images: writeImages } = outputMode(params)
     const stateKey = keyFor(params.folder, writeIndd, template, !writeImages)
@@ -47,6 +69,10 @@ async function main (params) {
       // params.force=1 (operator escape hatch) also drops the worker lock and restarts a running job.
       const forced = job.status === 'running' && /^(1|true|yes)$/i.test(String(params.force || ''))
       const stale = forced || (job.status === 'running' && Date.now() - Date.parse(job.updatedAt || job.createdAt || '') > 16 * 60 * 1000)
+      if (!stale && (job.status === 'queued' || job.status === 'running')) return { statusCode: 202, body: publicJob(job) }
+      const blocked = await gate()
+      if (blocked) return blocked
+      stamp(job)
       if (stale) {
         if (forced) await state.delete(`${stateKey}-lock`)
         job.status = 'queued'
@@ -55,7 +81,6 @@ async function main (params) {
         await invoke('generate-idapi-banners-worker', { jobId: job.jobId })
         return { statusCode: 202, body: publicJob(job) }
       }
-      if (job.status === 'queued' || job.status === 'running') return { statusCode: 202, body: publicJob(job) }
       if (job.status === 'completed') {
         job.status = 'queued'
         job.rowOffset = 0
@@ -76,6 +101,8 @@ async function main (params) {
         return { statusCode: 202, body: publicJob(job) }
       }
     }
+    const blocked = await gate()
+    if (blocked) return blocked
     const job = {
       stateKey,
       jobId: stateKey.slice('idapi-job-'.length),
@@ -91,6 +118,7 @@ async function main (params) {
       status: 'queued',
       createdAt: new Date().toISOString()
     }
+    stamp(job)
     await state.put(stateKey, JSON.stringify(job), { ttl, ifNotExists: true })
     const winner = await state.get(stateKey)
     const persisted = JSON.parse(winner.value)

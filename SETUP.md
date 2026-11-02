@@ -410,6 +410,7 @@ https://experience.adobe.com/?devMode=true&ext=<STAGE …adobeio-static.net/inde
 | **"Response not yet ready"** | Render exceeded the ~60s sync HTTP window — expected; the action finishes async and writes to AEM (fire-and-forget UX). |
 | Output uses the **wrong font** (looks "close but off") | Font substituted, not installed — the exact family+style isn't in `/content/dam/fonts` (or the per-job `fonts/`). Check the run log's `fonts (...)` block; add the discrete static weights the template references. |
 | Render fails **"Returned data file (dataURL) is not JSON"** | The script wrote an unescaped control char (e.g. InDesign's tab-delimited `Font.name`) into `result.json`. Escape `\t`/`\r`/`\n` in the JSON writer, then bump `CAPABILITY_VERSION` and re-`--register`. |
+| Banner Generation never reports `INDD_*` preflight findings | The registered capability predates the INDD gate in `generate_variations.jsx`. Bump `CAPABILITY_VERSION`, `--register`, update `INDESIGN_EXECUTE_URL` if it changed, and redeploy. |
 | Script change (fonts, `.indd` output, layout) **had no effect** | The capability runs the *registered* script, not the staged one — bump `CAPABILITY_VERSION` and `--register` again (Part 6). |
 
 ---

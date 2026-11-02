@@ -54,7 +54,7 @@
         // brand lockup placed from a designer's local drive) to the staged copy of the
         // same filename: assets/shots/<name>, else assets/brand/<name>. Swapped heroes
         // are relinked again per CSV row; this only guarantees static art resolves.
-        var relinked = 0;
+        var relinked = 0, missingLinks = []; // missingLinks: {name, label} still unresolved, for the preflight gate
         try {
             for (var mi = 0; mi < doc.links.length; mi++) {
                 var ml = doc.links[mi];
@@ -62,7 +62,14 @@
                 var cand = U.shot(ml.name);
                 if (!cand.exists) cand = new File(U.root + "/" + U.CONFIG.brandRel + "/" + ml.name);
                 if (cand.exists) { ml.relink(cand); relinked++; }
-                else warn.push("link still missing: " + ml.name);
+                else {
+                    warn.push("link still missing: " + ml.name);
+                    var mlabel = "";
+                    // the Script Label sits on the placed graphic (brand template) or on its frame (United template)
+                    try { mlabel = String(ml.parent.label || ""); } catch (eLb) {}
+                    if (!mlabel) { try { mlabel = String(ml.parent.parent.label || ""); } catch (eLb2) {} }
+                    missingLinks.push({ name: String(ml.name), label: mlabel });
+                }
             }
         } catch (eRel) { warn.push("link preflight: " + eRel.message); }
 
@@ -228,6 +235,147 @@
             return (n < 10 ? "0" + n : String(n));
         }
 
+        // ---- Preflight gate (cloud only). The orchestrator sets "preflightGate" in the
+        // parameters blob on the first batch; desktop runs never set it, so nothing below
+        // runs there. It checks the template + CSV together BEFORE any row is rendered:
+        // a CSV image that isn't staged would otherwise be typeset as text by setField.
+        // Errors fail the job with errorString "PREFLIGHT:[<findings json>]" (the
+        // orchestrator parses it); "preflightOverride" runs the checks but never blocks.
+        // Finding shape: {severity, code, message, column?, rows?, rowsTotal?}; rows are
+        // CSV row numbers (header = row 1), so the first data row is 2.
+        function paramFlag(name) {
+            try {
+                var pj = app.scriptArgs.get("parameters");
+                if (pj) {
+                    var m = pj.match(new RegExp('"' + name + '"\\s*:\\s*(true|false|"[^"]*"|\\d+)', "i"));
+                    if (m) { var v = String(m[1]).replace(/"/g, "").toLowerCase(); return (v === "1" || v === "true" || v === "yes"); }
+                }
+            } catch (e) {}
+            return false;
+        }
+
+        function findingJson(severity, code, message, rows, column) {
+            var s = '{"severity":' + jesc(severity) + ',"code":' + jesc(code) + ',"message":' + jesc(message);
+            if (column) s += ',"column":' + jesc(column);
+            if (rows && rows.length) s += ',"rows":[' + rows.slice(0, 20).join(",") + '],"rowsTotal":' + rows.length;
+            return s + '}';
+        }
+
+        function rowsHint(rows) {
+            var shown = rows.slice(0, 5).join(", ");
+            return " (row" + (rows.length === 1 ? " " : "s ") + shown + (rows.length > 5 ? " and " + (rows.length - 5) + " more" : "") + ")";
+        }
+
+        function preflightGate() {
+            var errs = [], wrns = [], pageCount = doc.pages.length;
+            var fields = [], isField = {}, hi, k;
+            for (hi = 0; hi < csv.header.length; hi++) {
+                var hf = U.trim(csv.header[hi]);
+                if (hf && hf !== C.file && !isField[hf]) { fields.push(hf); isField[hf] = true; }
+            }
+
+            // Script Labels present in the template, and which CSV columns drive a picture.
+            var labelSet = {}, labelLower = {}, nLabels = 0, imageCol = {};
+            for (var pi = 0; pi < pageCount; pi++) {
+                var items = doc.pages.item(pi).allPageItems;
+                for (var ii = 0; ii < items.length; ii++) {
+                    var lb = "";
+                    try { lb = String(items[ii].label || ""); } catch (eLab) {}
+                    if (!lb) continue;
+                    if (!labelSet[lb]) { labelSet[lb] = true; labelLower[lb.toLowerCase()] = lb; nLabels++; }
+                    if (isField[lb] && !imageCol[lb]) {
+                        try { if (resolveImageTarget(items[ii]).graphic) imageCol[lb] = true; } catch (eImg) {}
+                    }
+                }
+            }
+
+            // 1. every CSV column must name a Script Label (a typo'd header silently does nothing).
+            for (hi = 0; hi < fields.length; hi++) {
+                if (labelSet[fields[hi]]) continue;
+                var near = labelLower[fields[hi].toLowerCase()];
+                errs.push(findingJson("error", "INDD_LABEL_UNMATCHED",
+                    'CSV column "' + fields[hi] + '" matches no Script Label in the template' + (near ? ' (did you mean "' + near + '"?)' : "") + " - it would be ignored",
+                    null, fields[hi]));
+            }
+
+            // 2. every image a CSV cell names must be staged. A name that is missing from the
+            // staged images is not skipped by setField: it falls through and is typeset as TEXT.
+            var imgRe = /\.(jpe?g|png|gif|tiff?|psd|psb|webp|bmp|heic|svg|ai|eps)$/i, shotSeen = {};
+            for (hi = 0; hi < fields.length; hi++) {
+                var col = fields[hi];
+                if (!labelSet[col]) continue; // already reported
+                var byVal = {}, order = [];
+                for (var rr = 0; rr < csv.rows.length; rr++) {
+                    var v = U.trim(csv.rows[rr][col]);
+                    if (!v) continue;
+                    if (!imageCol[col] && !imgRe.test(v)) continue;
+                    if (shotSeen[v] === undefined) { try { shotSeen[v] = U.shot(v).exists; } catch (eShot) { shotSeen[v] = false; } }
+                    if (shotSeen[v]) continue;
+                    if (!byVal[v]) { byVal[v] = []; order.push(v); }
+                    byVal[v].push(rr + 2);
+                }
+                for (k = 0; k < order.length; k++) {
+                    errs.push(findingJson("error", "INDD_IMG_MISSING",
+                        col + ': image "' + order[k] + '" was not found among the staged images' + rowsHint(byVal[order[k]]) +
+                        (imageCol[col] ? "" : " - it would be typeset as text"),
+                        byVal[order[k]], col));
+                }
+            }
+
+            // 3. the page map must describe every template page, and give each a distinct name
+            // (output files are named <page>_<row>, so duplicate names overwrite each other).
+            var pmCount = 0, pmMissing = [];
+            for (k in pageMap) { if (pageMap.hasOwnProperty(k)) pmCount++; }
+            if (pmFile && pmFile.exists && pmCount > 0) {
+                for (var pn2 = 1; pn2 <= pageCount; pn2++) { if (!pageMap[String(pn2)] || !U.trim(pageMap[String(pn2)])) pmMissing.push(pn2); }
+                if (pmCount !== pageCount) errs.push(findingJson("error", "INDD_PAGEMAP_COUNT",
+                    'The page map "' + pmName + '" lists ' + pmCount + " page(s) but the template has " + pageCount, null, null));
+                else if (pmMissing.length) errs.push(findingJson("error", "INDD_PAGEMAP_COUNT",
+                    'The page map "' + pmName + '" has no name for page number(s) ' + pmMissing.join(", "), null, null));
+            }
+            var pageSeen = {}, pageDup = [];
+            for (var pj2 = 0; pj2 < pageCount; pj2++) {
+                var nm = pageNameOf(null, pj2), nmKey = nm.toLowerCase();
+                if (pageSeen[nmKey]) pageDup.push(nm); else pageSeen[nmKey] = true;
+            }
+            if (pageDup.length) errs.push(findingJson("error", "INDD_PAGENAME_DUP",
+                "Page name(s) used by more than one page: " + pageDup.join(", ") + " - their output files would overwrite each other", null, null));
+
+            // 4. fonts the render server can't use are substituted on every banner.
+            for (var fq = 0; fq < fontReport.length; fq++) {
+                var fnm = fontReport[fq].name.replace(/\t/g, " "), flb = fontReport[fq].label;
+                if (flb === "not_available" || flb === "substituted") errs.push(findingJson("error", "INDD_FONT_MISSING",
+                    'Font "' + fnm + '" is ' + (flb === "substituted" ? "substituted" : "not available") + " on the render server - text set in it would change", null, null));
+                else if (flb === "unknown") wrns.push(findingJson("warn", "INDD_FONT_UNKNOWN",
+                    'Could not tell whether font "' + fnm + '" is available on the render server', null, null));
+            }
+
+            // 5. placed art whose file is gone and isn't a CSV-driven image would stay a missing-link box.
+            var linkSeen = {};
+            for (var lq = 0; lq < missingLinks.length; lq++) {
+                var ln = missingLinks[lq];
+                if (linkSeen[ln.name] || (ln.label && isField[ln.label])) continue; // a CSV column swaps it per row
+                linkSeen[ln.name] = true;
+                errs.push(findingJson("error", "INDD_LINK_MISSING",
+                    'The template\'s placed image "' + ln.name + '" is missing and was not found among the staged images', null, null));
+            }
+
+            return { errs: errs, wrns: wrns, facts: '{"pages":' + pageCount + ',"labels":' + nLabels + ',"columns":' + fields.length +
+                ',"fonts":' + fontReport.length + ',"links":' + doc.links.length + '}' };
+        }
+
+        var gateOn = paramFlag("preflightGate"), gateOverride = paramFlag("preflightOverride");
+        var gateFindings = [], gateFacts = "";
+        if (gateOn) {
+            var gres = null;
+            try { gres = preflightGate(); } catch (eGate) { warn.push("preflight gate: " + (eGate && eGate.message ? eGate.message : eGate)); }
+            if (gres) {
+                gateFindings = gres.errs.concat(gres.wrns).slice(0, 40); // errors first, so a cap never hides one
+                gateFacts = gres.facts;
+                if (gres.errs.length && !gateOverride) return failurePkg("PREFLIGHT:[" + gateFindings.join(",") + "]");
+            }
+        }
+
         for (var r = 0; r < csv.rows.length; r++) {
             var row = csv.rows[r];
             var stem = U.trim(row[C.file] || ("row" + (r + 1)));
@@ -314,7 +462,8 @@
         rf.encoding = "UTF-8"; rf.open("w");
         var fontsJson = [];
         for (var fk = 0; fk < fontReport.length; fk++) fontsJson.push('{"name":' + jesc(fontReport[fk].name) + ',"status":' + jesc(fontReport[fk].label) + '}');
-        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + '],"links":{' + linkMaps.join(",") + '}}');
+        var pfJson = gateOn && gateFacts ? ',"preflight":{"facts":' + gateFacts + ',"findings":[' + gateFindings.join(",") + ']}' : "";
+        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + '],"links":{' + linkMaps.join(",") + '}' + pfJson + '}');
         rf.close();
         return successPkg(outFiles, resultRel);
     } catch (e) {

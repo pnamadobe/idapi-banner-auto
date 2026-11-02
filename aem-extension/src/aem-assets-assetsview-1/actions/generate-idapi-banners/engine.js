@@ -21,6 +21,8 @@ const psd = require('./psd')
 const images = require('./images')
 const { attachPreview, previewKey } = require('./renditions')
 const { classify } = require('./classify')
+const { csvRecords } = require('./csv')
+const { runPreflight, runPsdChecks, missingInputs, summarize, parsePreflightPayload, sanitizeIndFindings, MAX_STORED_FINDINGS } = require('./preflight')
 const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
 
 // Mint a fresh AEM token from an AEM Service Credential (JWT flow). The whole
@@ -146,22 +148,6 @@ function missingMessage (missing, templateName) {
     ? `the selected template ${templateName} was not found in the folder (also missing: ${missing.filter((k) => k !== 'template').join(', ') || 'nothing else'})`
     : `folder is missing required input(s): ${missing.join(', ')}`
 }
-function csvRecords (text) {
-  const records = []
-  let record = ''
-  let quoted = false
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    record += ch
-    if (ch === '"') quoted = text[i + 1] === '"' ? quoted : !quoted
-    if ((ch === '\n' || (ch === '\r' && text[i + 1] !== '\n')) && !quoted) {
-      if (record.replace(/\r?\n$/, '').trim()) records.push(record.replace(/\r?\n$/, ''))
-      record = ''
-    }
-  }
-  if (record.trim()) records.push(record)
-  return records
-}
 // Resolve every image the CSV references (job folder, subfolders, or a path from the job folder),
 // throwing a readable error for anything missing, ambiguous or outside the folder. Bare names that
 // are nowhere in the folder are tolerated for INDD templates (their Asset Links may supply them).
@@ -204,24 +190,66 @@ async function aemContext (params) {
   if (!/^https:\/\//i.test(author)) throw new Error('AEM_AUTHOR_URL must be an https URL')
   return { author, aemToken }
 }
+// Images opened to check size and format: bounded so a big CSV can't stall the start action.
+const PROBE_MAX = 60
+const PROBE_CONCURRENCY = 4
+const PROBE_BUDGET_MS = 20000
+async function probeImages (author, token, resolved) {
+  const paths = [...new Set(resolved.map((r) => r.damPath))].slice(0, PROBE_MAX)
+  const probes = new Map()
+  const deadline = Date.now() + PROBE_BUDGET_MS
+  let next = 0
+  const worker = async () => {
+    while (next < paths.length && Date.now() < deadline) {
+      const damPath = paths[next++]
+      try {
+        const buf = await aemDownload(author, token, damPath)
+        probes.set(damPath, { size: buf.length, dims: psd.imageSize(buf) })
+      } catch (e) { /* not opened: counted as unchecked, not as a problem with the image */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, paths.length) }, worker))
+  return probes
+}
+// Stage-1 preflight: everything decidable from the job folder alone, with no render started.
+// Never throws for a problem with the inputs; those come back as findings ({ ok, findings, ... }).
 async function inspectInputs (params) {
   const { author, aemToken } = await aemContext(params)
   const entries = await aemList(author, aemToken, params.folder)
   const c = classify(entries, params.template)
   const missing = ['template', 'variations', 'pagemap'].filter((k) => !c[k])
-  if (missing.length) throw new Error(missingMessage(missing, params.template))
+  if (missing.length) {
+    const r = missingInputs(missingMessage(missing, params.template))
+    return { variationRows: 0, pageCount: 0, template: c.template ? c.template.name : '', variations: c.variations ? c.variations.name : '', pagemap: c.pagemap ? c.pagemap.name : '', ...r }
+  }
   const templateBuf = await aemDownload(author, aemToken, `${params.folder}/${c.template.name}`)
   const variationsText = (await aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`)).toString('utf8')
   const pagemapText = (await aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)).toString('utf8')
-  if (isPsd(c.template.name)) {
-    // PSD layers are filled from images in the job folder (or its subfolders) only (no Asset Links).
-    await planImages(author, aemToken, params.folder, c, variationsText)
-  } else {
-    await resolveImages(author, params.folder, templateBuf, await planImages(author, aemToken, params.folder, c, variationsText, { allowBareUnresolved: true }))
+  const known = new Set(c.images.map((i) => i.name))
+  const plan = await images.resolveImageRefs({
+    folder: params.folder,
+    rootImages: c.images,
+    cells: images.csvImageCells(csvRecords(variationsText)),
+    list: async (dir) => {
+      const found = await aemListSafe(author, aemToken, dir)
+      found.forEach((e) => { if (!e.isFolder) known.add(dir === params.folder ? e.name : `${dir.slice(params.folder.length + 1)}/${e.name}`) })
+      return found
+    }
+  })
+  if (!isPsd(c.template.name) && plan.unresolved.length) {
+    // INDD: a swapped image missing from the folder may still be an AEM link inside the template.
+    try {
+      const { host } = new URL(author)
+      const { unresolved } = resolveSwappedImages(new Set(plan.unresolved.map((u) => u.ref)), [], damLinksFromTemplate(templateBuf), host)
+      const still = new Set(unresolved)
+      plan.unresolved = plan.unresolved.filter((u) => still.has(u.ref))
+    } catch (e) { /* unreadable links: keep every miss */ }
   }
+  const probes = await probeImages(author, aemToken, plan.resolved)
+  const r = runPreflight({ csvText: variationsText, pagemapText, plan, known: [...known], probes })
   const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
   const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
-  return { variationRows, pageCount, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name }
+  return { variationRows, pageCount, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name, ...r }
 }
 const isPsd = (name) => /\.psd$/i.test(name || '')
 function destFor (kind, name) {
@@ -311,6 +339,13 @@ async function indesignRender (p, tok, assets, renderParams) {
   if (er.status !== 202) throw new Error(`execute ${er.status} ${et}`)
   return (await indesignPoll(p, tok, JSON.parse(et).statusUrl)).outputs
 }
+// First string anywhere inside `v` (any depth) that carries a PREFLIGHT: payload.
+function findPreflightText (v, depth = 0) {
+  if (typeof v === 'string') return v.includes('PREFLIGHT:') ? v : ''
+  if (!v || typeof v !== 'object' || depth > 6) return ''
+  for (const x of Object.values(v)) { const t = findPreflightText(x, depth + 1); if (t) return t }
+  return ''
+}
 async function indesignPoll (p, tok, statusUrl) {
   for (let n = 0; n < 200; n++) {
     await new Promise((r) => setTimeout(r, 4000))
@@ -325,7 +360,12 @@ async function indesignPoll (p, tok, statusUrl) {
       }
       return { outputs: out, status: s }
     }
-    if (['failed', 'error', 'cancelled'].includes(st)) throw new Error(`render ${st}: ${JSON.stringify(s.errors || s)}`)
+    if (['failed', 'error', 'cancelled'].includes(st)) {
+      // The capability's template gate reports its findings as "PREFLIGHT:[...]" somewhere in the errors.
+      const findings = sanitizeIndFindings(parsePreflightPayload(findPreflightText(s.errors || s)))
+      if (findings.length) { const e = new Error(summarize(findings)); e.findings = findings; throw e }
+      throw new Error(`render ${st}: ${JSON.stringify(s.errors || s)}`)
+    }
   }
   throw new Error('render poll timeout')
 }
@@ -407,7 +447,7 @@ async function psFetchOutput (p, tok, output) {
 }
 
 // One batch of a PSD job: one create-composite call per CSV row, one JPEG per pagemap artboard.
-async function renderPsdBatch ({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable, writeImages = true }) {
+async function renderPsdBatch ({ params, job, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable, writeImages = true }) {
   const staged = []
   staged.push({ dest: destFor('psd'), buf: await aemDownload(author, aemToken, `${folder}/${c.template.name}`) })
   let varText = (await aemDownload(author, aemToken, `${folder}/${c.variations.name}`)).toString('utf8')
@@ -443,6 +483,17 @@ async function renderPsdBatch ({ params, job, state, logger, author, aemToken, f
   // Layer ids come from the manifest (names repeat across artboards).
   const manifestRes = await psJob(params, tok, '/v2/generate-manifest', { image: { source: { url: urlOf.get(destFor('psd')) } }, extractSmartObjectData: true, outputs: [{ destination: { validityPeriod: 3600 }, mediaType: 'application/json' }] })
   const manifest = JSON.parse((await psFetchOutput(params, tok, manifestRes.result.outputs[0])).toString('utf8'))
+  // First batch only: template-aware checks, before any render is paid for. Later batches
+  // would only repeat them; stage 1 already covered the whole CSV.
+  if (rowOffset === 0) {
+    const checked = runPsdChecks({ csvText: varText, pagemapText, manifest, stagedFonts: [...fontByName.keys()] })
+    for (const f of checked.findings) logger.warn(`preflight ${f.severity} ${f.code}: ${f.message}`)
+    if (!checked.ok && params.preflightOverride !== '1') {
+      const err = new Error(summarize(checked.findings))
+      err.findings = checked.findings
+      throw err
+    }
+  }
   const all = psd.artboardsFromManifest(manifest)
   const { selected, missing } = psd.selectArtboards(all, psd.pagemapNames(csvRecords(pagemapText)))
   if (missing.length) throw new Error(`pagemap lists artboard(s) not found in the PSD: ${missing.join(', ')}`)
@@ -524,7 +575,7 @@ async function processBatch (params, job, state) {
     if (missing.length) return errorResponse(400, missingMessage(missing, params.template), logger)
 
     if (isPsd(c.template.name)) {
-      const r = await renderPsdBatch({ params, job, state, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable: /^(1|true|yes)$/i.test(String(params.writeIndd || '')), writeImages: !/^(1|true|yes)$/i.test(String(params.skipImages || '')) })
+      const r = await renderPsdBatch({ params, job, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable: /^(1|true|yes)$/i.test(String(params.writeIndd || '')), writeImages: !/^(1|true|yes)$/i.test(String(params.skipImages || '')) })
       if (state && job) {
         const completed = new Set(job.outputs || [])
         r.written.forEach((name) => completed.add(name))
@@ -597,7 +648,9 @@ async function processBatch (params, job, state) {
     const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
     const skipImages = writeIndd && /^(1|true|yes)$/i.test(String(params.skipImages || ''))
     // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
-    const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd })
+    // The template checks run once, in the first batch, inside the capability script (needs the re-registered script).
+    const gate = rowOffset === 0 ? { preflightGate: '1', ...(params.preflightOverride === '1' ? { preflightOverride: '1' } : {}) } : {}
+    const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate })
 
     // 5. write outputs back to AEM <folder>/output (unpublished → review)
     const outFolder = (job && job.outputFolder) || folder + '/output'
@@ -609,7 +662,15 @@ async function processBatch (params, job, state) {
     // result.json (from the script) records each saved INDD's local image links.
     let linkMap = {}
     const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
-    if (rj) { try { linkMap = (await (await fetch(rj.url)).json()).links || {} } catch (e) { logger.warn(`result.json unreadable: ${e.message}`) } }
+    let gateFindings = []
+    if (rj) {
+      try {
+        const resultJson = await (await fetch(rj.url)).json()
+        linkMap = resultJson.links || {}
+        gateFindings = sanitizeIndFindings(resultJson.preflight && resultJson.preflight.findings)
+      } catch (e) { logger.warn(`result.json unreadable: ${e.message}`) }
+    }
+    for (const f of gateFindings) logger.warn(`preflight ${f.severity} ${f.code}: ${f.message}`)
     for (const o of outputs) {
       const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
       if (name === 'result.json') continue
@@ -699,6 +760,11 @@ async function processBatch (params, job, state) {
       written.forEach((name) => completed.add(name))
       job.outputs = Array.from(completed)
       job.lastBatchCount = written.length
+      if (gateFindings.length) {
+        // keep stage-1 findings and add the template ones (overridden errors + warnings); errors first
+        const merged = [...(job.findings || []), ...gateFindings.filter((f) => !(job.findings || []).some((o) => o.code === f.code && o.message === f.message))]
+        job.findings = [...merged.filter((f) => f.severity === 'error'), ...merged.filter((f) => f.severity !== 'error')].slice(0, MAX_STORED_FINDINGS)
+      }
       await state.put(job.stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
     }
 
@@ -722,6 +788,11 @@ async function processBatch (params, job, state) {
     }
   } catch (error) {
     logger.error(error)
+    // Template checks fail the job before any render; keep their findings for the status action.
+    if (error.findings && state && job) {
+      job.findings = error.findings.slice(0, MAX_STORED_FINDINGS)
+      try { await state.put(job.stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true }) } catch (e) { logger.warn(`could not store findings: ${e.message}`) }
+    }
     return errorResponse(500, `generation failed: ${error.message}`, logger)
   }
 }

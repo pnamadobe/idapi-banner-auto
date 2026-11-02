@@ -39,7 +39,7 @@ async function main (params) {
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
     context = await aemContext({ ...params, aemAuthorUrl: job.aemAuthorUrl, folder: job.folder })
     await saveManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })
-    const result = await processBatch({ ...params, folder: job.folder, template: job.template || '', aemAuthorUrl: job.aemAuthorUrl, writeIndd: job.writeIndd ? '1' : '', skipImages: job.writeImages === false ? '1' : '', maxRows: job.batchSize, rowOffset: job.rowOffset }, job, state)
+    const result = await processBatch({ ...params, folder: job.folder, template: job.template || '', aemAuthorUrl: job.aemAuthorUrl, writeIndd: job.writeIndd ? '1' : '', skipImages: job.writeImages === false ? '1' : '', preflightOverride: job.preflightOverride ? '1' : '', maxRows: job.batchSize, rowOffset: job.rowOffset }, job, state)
     if (result && result.error) throw new Error(result.error.body && result.error.body.error ? result.error.body.error : 'batch failed')
     const rows = result.body && result.body.batchRows ? result.body.batchRows : 0
     job.rowOffset += rows
