@@ -11,6 +11,9 @@
 | Layers and images | the **AEM DAM**, referenced by Dynamic Media OpenAPI delivery URLs |
 | Layout source of truth | the **INDD**; re-running Generate rewrites geometry, and authors own copy and motion |
 | Packaging | a headless browser in GitHub Actions; zips and visual renditions written back to the DAM |
+| Packaging trigger | its own **"Package for CM360"** button, separate from Publish; publishing never packages, and packaging needs no publish |
+| Fidelity failures | flag the ad, never block: the job and every other ad carry on |
+| Fonts | out of scope for now: the starter repo's web fonts are used as they are, with no licensing check or raster fallback |
 | Customer setup | we ship a **starter repo** (block, DA app, packaging workflow) |
 
 **Goal:** turn the INDD template that already drives "Generate Banners" into **animated HTML5 ads that are
@@ -53,15 +56,16 @@ Assets View "Generate Banners"  [x] HTML5 banners
 Runtime worker (engine.js)
   1 render ── InDesign API: JPG backups (existing) + layer export (new, §4)
   2 import
-     ├─ AEM DAM   output/html5/assets/<size>/…   slices, raster text   (approved on upload)
+     ├─ AEM DAM   output/html5/assets/<size>/…   slices                (approved on upload)
      ├─ DA        /ads/<campaign>/variations     sheet  (from the variations CSV)
      │            /ads/<campaign>/<size>         one layout page per size, `ad` block (§5)
      └─ EDS admin preview → aem.page
         │
         ▼
 Review: gallery of live ads (modal and DA app) ─ edit copy in the sheet, motion in the page
-        │  "Package for CM360"
-        ▼
+        │                                   │
+        │  "Package for CM360" (button)     │  DA "Publish" (separate) ─► aem.live
+        ▼                                   ▼  owned-channel embeds only (§12)
 GitHub Actions (starter repo)  package.yml ─ Playwright on aem.page
   zip · weight budget · animated GIF · storyboard · fidelity score
         │
@@ -77,8 +81,13 @@ The user sees three steps:
 2. **Review.** A gallery of live banners, one per size × row, opens in the Assets View modal when the job
    finishes, and also as an app inside DA (§8). Marketers fix copy in the sheet and adjust motion in the page;
    the gallery updates on the next preview.
-3. **Package.** "Package for CM360" runs the packaging workflow (§7), which writes zips and their visuals back
-   to the DAM.
+3. **Package.** A separate **"Package for CM360"** button, in the gallery (modal and DA app), runs the
+   packaging workflow (§7), which writes zips and their visuals back to the DAM. The marketer picks all ads or
+   a selection of sizes × rows, and can package again at any time.
+
+**Package and Publish are separate actions.** Publish is DA's own button: it puts the pages on `aem.live` for
+embedding on the customer's site (§12). Package makes CM360 zips. Neither triggers the other, so an ad can be
+packaged for CM360 without ever being published to the site, and republishing a page never makes new zips.
 
 ---
 
@@ -111,13 +120,15 @@ media-plan question.
 
 A label with no matching column is allowed, for example a fixed logo labelled only so it can animate.
 
-### 3.3 Text: live by default, raster fallback
+### 3.3 Text is live
 
 Labelled **text** frames become **live HTML text**: editable in the sheet, translatable, accessible and light.
 The capability exports each frame's box and type styles (font, weight, size, leading, tracking, colour,
-alignment, case). Live text needs a version of the font **licensed for ads served on third-party sites**. Where
-there isn't one, the element is marked `raster` and ships as an image of the text, rendered per row by InDesign
-(preflight reports it, §9). The fidelity check (§8) catches reflow differences in both cases.
+alignment, case). The fidelity check (§8) catches reflow differences.
+
+**Fonts are out of scope for now.** The block uses whatever web fonts the starter repo's styles load, and the
+zip carries those font files as they are. There is no licensing check, no subsetting and no raster fallback in
+v1; see "Deferred" in §16.
 
 ### 3.4 Variations
 
@@ -144,7 +155,7 @@ A `writeHtml5` parameter on `generate_variations.jsx` (same capability, re-regis
 * **Image elements** (`hero`, `logo`, …): record the frame box, the clipping and the crop. The image itself is
   the DAM asset named in the row. The browser fits it with `object-fit: cover`, with the focal point mapped from
   the InDesign crop.
-* **Text elements:** the frame box and type styles (§3.3). Raster text is exported per row as a PNG slice.
+* **Text elements:** the frame box and type styles (§3.3).
 * **Backup:** the existing page JPG per row, unchanged. It is the reference for the fidelity check.
 * **Animation panel (optional):** where a labelled item has InDesign `animationSettings`, read the preset,
   duration and delay as its initial motion (spike S2).
@@ -227,15 +238,17 @@ Out of scope for v1: multi-frame storytelling. Numbered labels (`headline.1`, `h
 
 ## 7. Packaging (GitHub Actions + Playwright)
 
-The starter repo carries `package.yml`. The worker triggers it with a `repository_dispatch` event that carries
-the job, sizes, rows and DAM output folder. A real browser renders the ads, so the zip and the visuals come from
+The starter repo carries `package.yml`. Only the "Package for CM360" button starts it: the button calls the
+worker, which sends a `repository_dispatch` event carrying the job, the selected sizes and rows, and the DAM output
+folder. Publishing does not start it. A real browser renders the ads, so the zip and the visuals come from
 exactly what reviewers saw.
 
 For each size × row:
 
-1. Open `aem.page/…/<size>?v=<row>&export=cm360` (or `aem.live` after publishing) in headless Chromium.
+1. Open `aem.page/…/<size>?v=<row>&export=cm360` in headless Chromium: the preview reviewers approved, so
+   no publish is needed.
 2. **Zip:** serialise the decorated DOM to `index.html`, inline the CSS, keep only the keyframes used, download
-   each image into the zip and rewrite its path, and embed a web-font subset of the glyphs used. The request log
+   each image and font file into the zip and rewrite its path. The request log
    must show nothing but the zip's own files.
 3. **Weight budget:** images are fetched from the delivery URLs with width, quality and format parameters,
    stepping down quality, then 2× → 1.5× → 1× size, until the zip fits `budgetKB`. The steps taken are recorded.
@@ -243,7 +256,8 @@ For each size × row:
 4. **Visuals:** `adTimeline.seek(t)` plus screenshots produce the **animated preview** (GIF, 12 fps), the
    **storyboard** (6 keyframes with timestamps) and the **final frame**.
 5. **Fidelity:** compare the final frame with the InDesign backup JPG for that page and row (RMSE; ≤ 0.02 pass,
-   ≤ 0.05 warn, above that flagged).
+   ≤ 0.05 warn, above that failed). A failure **flags that ad only**: its zip and visuals are still written,
+   marked failed in metadata and in the gallery, and every other ad in the job packages as normal.
 6. **Write back** through a small `html5-writeback` Runtime action that reuses the existing upload, renditions
    and relations code, so GitHub never holds AEM credentials.
 
@@ -258,7 +272,7 @@ these against the current CM360 HTML5 spec in spike S5.
 | visual | where | made by |
 |---|---|---|
 | **Live ad** | `aem.page` / `aem.live`; preview pane beside the DA page | the `ad` block in a browser |
-| **Gallery** | Assets View modal after Generate, and a **DA app** ("Ad gallery") next to the sheet: iframes for every size × row, a replay button, weight and fidelity under each | the same URLs |
+| **Gallery** | Assets View modal after Generate, and a **DA app** ("Ad gallery") next to the sheet: iframes for every size × row, a replay button, weight and fidelity under each, a fidelity-failed filter, and the **"Package for CM360"** button (all or selected) | the same URLs |
 | **Backup / final frame** | renditions of the `.zip` (`cq5dam.thumbnail.*`, `cq5dam.web.1280.1280.jpeg`, via `renditions.js` `attachPreview`), so the zip has a real thumbnail in the grid | InDesign backup JPG |
 | **Animated preview** | `<page>_<row>_preview.gif`, related to the zip | Playwright frames |
 | **Storyboard** | `<page>_<row>_storyboard.jpg`, related to the zip | Playwright keyframes |
@@ -276,7 +290,7 @@ size update after preview.
 <job folder>/output/
   WEB_MED_RECTANGLE_300x250_FAIR-EN-01.jpg            existing (= backup)
   html5/
-    assets/<size>/static-*.png, raster text           layers referenced by the DA pages
+    assets/<size>/static-*.png                        layers referenced by the DA pages
     WEB_MED_RECTANGLE_300x250_FAIR-EN-01.zip          thumbnail = backup
     WEB_MED_RECTANGLE_300x250_FAIR-EN-01_preview.gif
     WEB_MED_RECTANGLE_300x250_FAIR-EN-01_storyboard.jpg
@@ -296,10 +310,9 @@ size update after preview.
 | `HTML5_NO_EDS_SITE` | error | no EDS site configured for the job folder (§11) |
 | `HTML5_ASSET_NOT_DELIVERABLE` | error | a swapped image is not approved for delivery |
 | `HTML5_NO_CLICKTHROUGH` | warn | row without `clickthrough` |
-| `HTML5_FONT_NOT_WEB` | warn | text element forced to raster (no web-licensed font) |
 | `HTML5_SHEET_EDITED` | warn | the DA sheet differs from the CSV; the sheet is kept |
 | `HTML5_OVER_BUDGET` | error, after packaging | over budget at the lowest step |
-| `HTML5_FIDELITY` | warn, after packaging | fidelity above the warn threshold |
+| `HTML5_FIDELITY` | warn, after packaging | fidelity above the warn threshold; flags that ad only, never blocks the job |
 
 ---
 
@@ -362,7 +375,7 @@ named text layers carry their type styles, and named smart-object layers become 
 | S3 | From a Runtime action: write a DA page and sheet via the DA source API, preview via the EDS admin API, IMS auth for both | a layout page live on `aem.page` |
 | S4 | Dynamic Media OpenAPI on the program: delivery URLs for freshly approved slices, latency until deliverable, width/quality/format parameters, licensing | slices load in the preview within seconds of upload |
 | S5 | Packaging: a Playwright-built zip uploads cleanly to a CM360 sandbox; AEM keeps a direct-binary zip as one asset; which animated rendition Assets View plays (GIF vs WebP) | screenshots |
-| S6 | Live-text fidelity: exported InDesign type styles vs the browser with the web font | RMSE within the warn threshold on the sample template |
+| S6 | Live-text fidelity: exported InDesign type styles vs the browser, using the starter repo's fonts | RMSE within the warn threshold on the sample template |
 
 ## 15. Plan and effort (one engineer)
 
@@ -390,8 +403,12 @@ InDesign to packaged, reviewable HTML5 ads: **about 6–6.5 weeks**, including s
 
 ## 16. Open questions
 
-1. **Web fonts:** which brand fonts are licensed for ads served on third-party sites? This decides how much text
-   is live.
-2. **Fidelity failures:** flag only (proposed), or block packaging?
-3. **Packaging trigger:** manual button only, or also on publish (`aem.live`)?
-4. **Starter repo hosting:** a public Adobe template repo, or shared privately per customer?
+1. **Starter repo hosting:** a public Adobe template repo, or shared privately per customer?
+
+Settled: packaging has its own button, separate from Publish; a failed fidelity check flags the ad and never
+blocks the job.
+
+### Deferred
+
+* **Fonts:** licensing for ads served on third-party sites, glyph subsetting to save weight, and a raster
+  fallback for text whose font cannot ship. Not in v1.
