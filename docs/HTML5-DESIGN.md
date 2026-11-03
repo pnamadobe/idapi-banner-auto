@@ -1,0 +1,397 @@
+# HTML5 banners on Edge Delivery Services, from an InDesign template — design
+
+**Status:** design (no code yet). **Date:** 2026-11-03. **Scope:** InDesign first; Photoshop follows (§13).
+
+**Decisions so far**
+
+| topic | decision |
+|---|---|
+| Where ads live | AEM Edge Delivery Services (EDS) pages, authored in **Document Authoring** (da.live) |
+| Variation rows | a **DA sheet** (the variations CSV, imported); Content Fragments are not used |
+| Layers and images | the **AEM DAM**, referenced by Dynamic Media OpenAPI delivery URLs |
+| Layout source of truth | the **INDD**; re-running Generate rewrites geometry, and authors own copy and motion |
+| Packaging | a headless browser in GitHub Actions; zips and visual renditions written back to the DAM |
+| Customer setup | we ship a **starter repo** (block, DA app, packaging workflow) |
+
+**Goal:** turn the INDD template that already drives "Generate Banners" into **animated HTML5 ads that are
+EDS pages**. Each ad can be previewed live on `aem.page`, its copy is edited in a DA sheet, and it is packaged
+as a CM360-ready zip in the DAM. Every zip carries **visual renditions**: a backup image as its thumbnail, an
+animated preview, a storyboard and a fidelity score.
+
+Why EDS:
+
+* **HTML is AEM's native medium.** The ad is a page, previewed and published with the same machinery as the
+  rest of a site, and versioned in DA.
+* **No AEM code deploy.** The code is a block (JS + CSS) in GitHub, shipped by the EDS code bus. The customer's
+  AEM needs configuration only.
+* **Visuals come built in.** Every size × row has a live URL that *is* the banner, animation included, in a real
+  browser. Review, the gallery and packaging all use that one rendering.
+* **One ad, more than one channel.** The same ad can be embedded on the customer's EDS pages and packaged for
+  CM360.
+
+---
+
+## 1. Principles
+
+1. **The template is the guide.** Sizes, positions, z-order, static artwork and type come from the INDD.
+2. **One rendering, used everywhere.** The `ad` block renders the banner on `aem.page`, in the gallery and in the
+   packaged zip. What a reviewer approves is what ships.
+3. **The final frame equals the design.** Motion always animates *into* the designed layout, and the final frame
+   is checked against the InDesign render of the same page and row (§8).
+4. **Visuals are first-class.** No reviewer should need to download a zip to see an ad.
+5. **Reuse the pipeline:** the same folder-as-key job, InDesign capability, batching, preflight, DAM upload,
+   relations and renditions code.
+
+---
+
+## 2. Architecture
+
+```
+Assets View "Generate Banners"  [x] HTML5 banners
+        │
+        ▼
+Runtime worker (engine.js)
+  1 render ── InDesign API: JPG backups (existing) + layer export (new, §4)
+  2 import
+     ├─ AEM DAM   output/html5/assets/<size>/…   slices, raster text   (approved on upload)
+     ├─ DA        /ads/<campaign>/variations     sheet  (from the variations CSV)
+     │            /ads/<campaign>/<size>         one layout page per size, `ad` block (§5)
+     └─ EDS admin preview → aem.page
+        │
+        ▼
+Review: gallery of live ads (modal and DA app) ─ edit copy in the sheet, motion in the page
+        │  "Package for CM360"
+        ▼
+GitHub Actions (starter repo)  package.yml ─ Playwright on aem.page
+  zip · weight budget · animated GIF · storyboard · fidelity score
+        │
+        ▼
+Runtime writeback action ─► DAM output/html5/  zip (thumbnail = backup) + GIF + storyboard,
+                                               metadata, relations
+```
+
+The user sees three steps:
+
+1. **Generate.** InDesign renders the JPGs as today and also exports each HTML5 page as layers. The worker
+   puts the layers in the DAM, writes the sheet and one layout page per size into DA, and previews them.
+2. **Review.** A gallery of live banners, one per size × row, opens in the Assets View modal when the job
+   finishes, and also as an app inside DA (§8). Marketers fix copy in the sheet and adjust motion in the page;
+   the gallery updates on the next preview.
+3. **Package.** "Package for CM360" runs the packaging workflow (§7), which writes zips and their visuals back
+   to the DAM.
+
+---
+
+## 3. Template contract (InDesign additions)
+
+Nothing changes for templates that don't want HTML5.
+
+### 3.1 Pagemap columns
+
+All HTML5 settings live in the pagemap. A third CSV in the job folder would be misread as the variations file by
+`classify.js`.
+
+| column | example | meaning |
+|---|---|---|
+| `html5` | `yes` | make an HTML5 ad for this page. Pages without it get none (social story, app card…). |
+| `motion` | `hero:kenburns; headline:fadeUp@0.4; cta:pulse@1.6` | initial motion per element (§6) |
+| `duration` | `8` | timeline length in seconds (default 6, capped at 30) |
+| `loops` | `1` | plays (default 1, capped at 3); always stops on the final frame |
+| `budgetKB` | `150` | zip weight budget (default 150) |
+
+The banner size is the **InDesign page size**. Non-IAB sizes are allowed; whether a placement takes them is a
+media-plan question.
+
+### 3.2 Script Labels decide what is live
+
+* A **labelled** item is an **element**: its own layer in the ad, bound to the sheet column of the same name,
+  and animatable.
+* **Unlabelled** items are **static artwork**. Consecutive unlabelled items in stacking order merge into one
+  static slice (`static-0`, `static-1`, …), which keeps the z-order exact.
+
+A label with no matching column is allowed, for example a fixed logo labelled only so it can animate.
+
+### 3.3 Text: live by default, raster fallback
+
+Labelled **text** frames become **live HTML text**: editable in the sheet, translatable, accessible and light.
+The capability exports each frame's box and type styles (font, weight, size, leading, tracking, colour,
+alignment, case). Live text needs a version of the font **licensed for ads served on third-party sites**. Where
+there isn't one, the element is marked `raster` and ships as an image of the text, rendered per row by InDesign
+(preflight reports it, §9). The fidelity check (§8) catches reflow differences in both cases.
+
+### 3.4 Variations
+
+The variations CSV is imported as the DA sheet `/ads/<campaign>/variations`, which EDS publishes as JSON. One
+row is `{ outputFileName, <label>: value…, clickthrough }`. `clickthrough` is a reserved column, never a Script
+Label: it becomes the zip's default `clickTag`. Image columns hold DAM file names as today and are resolved to
+delivery URLs on import.
+
+After the first import, **the sheet is the source of copy for the HTML5 ads**. Re-running Generate does not
+overwrite a sheet that marketers have edited (it reports the difference instead), so copy edits are never lost.
+
+---
+
+## 4. InDesign capability changes
+
+A `writeHtml5` parameter on `generate_variations.jsx` (same capability, re-registered). For each page with
+`html5=yes`:
+
+* **Static slices.** Walk items back to front (parent-page items, then layers bottom-up, then items). For each
+  unlabelled run, hide everything else, export the **whole page** as a transparent PNG at 2× (144 ppi), and
+  restore. Exporting the whole page means the page edge clips exactly as in the JPG and effects are included.
+  The Runtime trims the transparent margin and records the box. Static slices don't depend on the row, so they
+  are exported **once per page**.
+* **Image elements** (`hero`, `logo`, …): record the frame box, the clipping and the crop. The image itself is
+  the DAM asset named in the row. The browser fits it with `object-fit: cover`, with the focal point mapped from
+  the InDesign crop.
+* **Text elements:** the frame box and type styles (§3.3). Raster text is exported per row as a PNG slice.
+* **Backup:** the existing page JPG per row, unchanged. It is the reference for the fidelity check.
+* **Animation panel (optional):** where a labelled item has InDesign `animationSettings`, read the preset,
+  duration and delay as its initial motion (spike S2).
+
+`result.json` gains an `html5` block per page: `{ width, height, slices[], elements[{label, kind, box, style,
+crop, anim}] }`.
+
+---
+
+## 5. DA content
+
+### 5.1 Images by DAM delivery URL
+
+Every layer image is a DAM asset referenced by its Dynamic Media OpenAPI delivery URL (built from the asset
+ID). The DAM keeps one asset of record, with rights metadata and relations.
+
+* **Generated slices** go to `output/html5/assets/<size>/` and are set approved as they are uploaded. They are
+  machine output from an INDD already in use, so review can start straight away.
+* **Swapped images** (`hero`, …) are referenced where they sit in the job folder. They must already be
+  approved for delivery; if one isn't, preflight stops the job before rendering (`HTML5_ASSET_NOT_DELIVERABLE`).
+
+This needs **Dynamic Media with OpenAPI** on the customer's AEM program (spike S4).
+
+### 5.2 One layout page per size
+
+`/ads/<campaign>/<pagename>`, for example `/ads/fairbanks/web_med_rectangle_300x250`. The worker writes it
+through DA's source API as HTML in which the `ad` block is a table with one row per layer:
+
+| ad | | | | |
+|---|---|---|---|---|
+| size | 300x250 | duration 6 | loops 1 | rows `/ads/fairbanks/variations.json` |
+| static-0 | image | *(delivery URL)* | 0,0,300,250 | none |
+| hero | image | `{hero}` | 0,0,300,250 | kenburns |
+| static-1 | image | *(delivery URL)* | 0,140,300,110 | none |
+| headline | text | `{headline}` | 16,150,268,48 | fadeUp@0.4 · Sans Bold 22/24 #fff |
+| cta | text | `{cta}` | 16,206,120,28 | pulse@1.6 · button |
+
+* `{label}` binds a layer to the sheet column of the same name. A layer can also hold fixed text or a fixed DAM
+  image.
+* Geometry is in banner pixels. Authors may nudge a value or change a motion preset, with the live preview
+  beside the table. Layout as a whole belongs to the INDD: re-running Generate rewrites the geometry and static
+  layers, and keeps the motion cells that authors changed.
+
+### 5.3 Rows by query, not by page
+
+A layout page renders any row with `?v=<outputFileName>`: the block fetches the sheet JSON and fills the bound
+layers. That is one page per size, not sizes × rows, so a layout fix applies to every row.
+`aem.page/ads/fairbanks/web_med_rectangle_300x250?v=FAIR-EN-01` is the live, shareable preview of that ad.
+
+---
+
+## 6. The `ad` block (starter repo)
+
+`blocks/ad/ad.js` + `ad.css`, a few hundred lines, no dependencies:
+
+* builds a fixed-size stage (`position: relative; overflow: hidden`) with absolutely positioned layers in
+  z-order, live text with the exported styles, and images from the delivery URLs;
+* applies motion as **CSS keyframes** from a preset library. Every preset ends at the designed state:
+
+| preset | does |
+|---|---|
+| `none` | visible from t=0 (static slices) |
+| `fade` | opacity 0→1 |
+| `fadeUp` / `fadeDown` | opacity + 12 px rise/fall |
+| `slideLeft` / `slideRight` | enters from the side, clipped by the stage |
+| `wipe` | `clip-path` reveal |
+| `zoomIn` | scale 0.9→1 + fade |
+| `kenburns` | scale 1.08→1 over the timeline (full-bleed image layers only) |
+| `pulse` | after entry, scale 1→1.05→1 (CTA) |
+
+  The syntax is `preset[@delay][/duration]`. With nothing set, the background is visible at t=0, `hero` gets
+  kenburns, text gets `fadeUp` in reading order 0.3 s apart, and `cta` comes last with `pulse`;
+* has two modes: `?v=` for preview, and `?export=cm360` for packaging. Export mode adds `ad.size` and `clickTag`,
+  wraps the stage in the click-through anchor, and loads no page chrome, RUM or other external scripts;
+* exposes `window.adTimeline` (`{duration, seek(t)}`) so packaging can step through the animation frame by frame.
+
+Out of scope for v1: multi-frame storytelling. Numbered labels (`headline.1`, `headline.2`) could add it later.
+
+---
+
+## 7. Packaging (GitHub Actions + Playwright)
+
+The starter repo carries `package.yml`. The worker triggers it with a `repository_dispatch` event that carries
+the job, sizes, rows and DAM output folder. A real browser renders the ads, so the zip and the visuals come from
+exactly what reviewers saw.
+
+For each size × row:
+
+1. Open `aem.page/…/<size>?v=<row>&export=cm360` (or `aem.live` after publishing) in headless Chromium.
+2. **Zip:** serialise the decorated DOM to `index.html`, inline the CSS, keep only the keyframes used, download
+   each image into the zip and rewrite its path, and embed a web-font subset of the glyphs used. The request log
+   must show nothing but the zip's own files.
+3. **Weight budget:** images are fetched from the delivery URLs with width, quality and format parameters,
+   stepping down quality, then 2× → 1.5× → 1× size, until the zip fits `budgetKB`. The steps taken are recorded.
+   Still over at the lowest step: preflight error.
+4. **Visuals:** `adTimeline.seek(t)` plus screenshots produce the **animated preview** (GIF, 12 fps), the
+   **storyboard** (6 keyframes with timestamps) and the **final frame**.
+5. **Fidelity:** compare the final frame with the InDesign backup JPG for that page and row (RMSE; ≤ 0.02 pass,
+   ≤ 0.05 warn, above that flagged).
+6. **Write back** through a small `html5-writeback` Runtime action that reuses the existing upload, renditions
+   and relations code, so GitHub never holds AEM credentials.
+
+The CM360 essentials checked in each zip: `index.html` at the root, `<meta name="ad.size">`, a `var clickTag`
+opened with `window.open(clickTag)`, relative paths only, a backup image, and duration × loops ≤ 30 s. Confirm
+these against the current CM360 HTML5 spec in spike S5.
+
+---
+
+## 8. Visual renditions and review
+
+| visual | where | made by |
+|---|---|---|
+| **Live ad** | `aem.page` / `aem.live`; preview pane beside the DA page | the `ad` block in a browser |
+| **Gallery** | Assets View modal after Generate, and a **DA app** ("Ad gallery") next to the sheet: iframes for every size × row, a replay button, weight and fidelity under each | the same URLs |
+| **Backup / final frame** | renditions of the `.zip` (`cq5dam.thumbnail.*`, `cq5dam.web.1280.1280.jpeg`, via `renditions.js` `attachPreview`), so the zip has a real thumbnail in the grid | InDesign backup JPG |
+| **Animated preview** | `<page>_<row>_preview.gif`, related to the zip | Playwright frames |
+| **Storyboard** | `<page>_<row>_storyboard.jpg`, related to the zip | Playwright keyframes |
+| **Fidelity** | metadata on the zip (sortable); a preflight finding when it fails | final frame vs backup |
+
+Reviewers watch the ads live before packaging. After packaging, the DAM asset shows a thumbnail, an animation
+and a storyboard. Nobody unzips anything. In the DA app, a marketer can edit a row in the sheet and watch every
+size update after preview.
+
+---
+
+## 9. AEM output, metadata, relations, preflight
+
+```
+<job folder>/output/
+  WEB_MED_RECTANGLE_300x250_FAIR-EN-01.jpg            existing (= backup)
+  html5/
+    assets/<size>/static-*.png, raster text           layers referenced by the DA pages
+    WEB_MED_RECTANGLE_300x250_FAIR-EN-01.zip          thumbnail = backup
+    WEB_MED_RECTANGLE_300x250_FAIR-EN-01_preview.gif
+    WEB_MED_RECTANGLE_300x250_FAIR-EN-01_storyboard.jpg
+```
+
+* **Metadata on the zip:** size, bytes, budget steps, clickthrough, duration and loops, fidelity score, DA page
+  URL, row id, source template.
+* **Relations** (`relations.js`): template → zip `derived`; zip ↔ backup, preview, storyboard and swapped images
+  `other`.
+* **Preflight additions** (same gate and format):
+
+| code | severity | when |
+|---|---|---|
+| `HTML5_NO_PAGES` | error | HTML5 requested, no `html5=yes` page |
+| `HTML5_MOTION_UNKNOWN` | error | unknown preset, or a role not labelled on that page |
+| `HTML5_TOO_LONG` | error | duration × loops > 30 s |
+| `HTML5_NO_EDS_SITE` | error | no EDS site configured for the job folder (§11) |
+| `HTML5_ASSET_NOT_DELIVERABLE` | error | a swapped image is not approved for delivery |
+| `HTML5_NO_CLICKTHROUGH` | warn | row without `clickthrough` |
+| `HTML5_FONT_NOT_WEB` | warn | text element forced to raster (no web-licensed font) |
+| `HTML5_SHEET_EDITED` | warn | the DA sheet differs from the CSV; the sheet is kept |
+| `HTML5_OVER_BUDGET` | error, after packaging | over budget at the lowest step |
+| `HTML5_FIDELITY` | warn, after packaging | fidelity above the warn threshold |
+
+---
+
+## 10. Content model notes
+
+* **Copy lives in the DA sheet**, with DA's version history. DA's translation tooling works on sheets and pages,
+  so a language is one more sheet (or one more column set) and needs no new code.
+* **Content Fragments are not used.** If a customer insists, a later adapter can fill the sheet from AEM's
+  fragment delivery API; the block stays the same.
+* The JPG/INDD path could later read rows from the same sheet, so one row source would drive static and HTML5
+  banners alike.
+
+---
+
+## 11. Customer setup: the starter repo
+
+We ship `banner-ads`, an EDS starter repo the customer forks into their GitHub organisation:
+
+* `blocks/ad/` — the block, motion presets and tests;
+* `tools/ad-gallery/` — the DA app;
+* `.github/workflows/package.yml` — packaging, plus a secret holding the writeback action's key;
+* EDS and DA config pointing at the customer's AEM, with their DA org and site.
+
+On the AEM side:
+
+* **Job folder → site mapping:** folder metadata (or a config file in the job folder) naming the DA org, site and
+  `/ads` root. Without it, Generate still makes the JPGs and preflight reports `HTML5_NO_EDS_SITE`.
+* **Dynamic Media with OpenAPI** enabled on the program.
+* The Runtime worker's inputs gain the GitHub dispatch token; DA writes use the job's IMS token (spike S3).
+
+Compared with today's extension, which adds nothing to AEM, this adds a GitHub repo and an EDS site, but still no
+Java deploy.
+
+## 12. Activation
+
+* **CM360, phase 1:** download the zip (and the backup JPG if asked) from the DAM and upload to CM360. The
+  clickTag is set at trafficking.
+* **CM360, later:** push through the Trafficking API from the writeback action, and store the CM360 creative id on
+  the zip.
+* **Owned channels:** embed the live ad on any of the customer's EDS pages with the fragment block. Same block,
+  same sheet, no zip.
+
+---
+
+## 13. Photoshop (next)
+
+Only the layer export changes. The PSD path already calls `generate-manifest`, which gives each layer's id and
+frame per artboard (`docs/PSD-DESIGN.md`). Runs of unnamed layers become static slices via `create-composite`,
+named text layers carry their type styles, and named smart-object layers become image elements. Everything from
+§5 onwards is shared. Estimate 1–1.5 weeks after InDesign.
+
+---
+
+## 14. Spikes (about 1 week)
+
+| # | question | pass looks like |
+|---|---|---|
+| S1 | Slice export on InDesign Server: hide/restore incl. parent items, transparent 144 ppi PNG, z-order walk, type-style read-out, time per export | 10-page template exported; static-run merge matches the JPG |
+| S2 | Is `animationSettings` readable on InDesign Server? | presets and delays read back |
+| S3 | From a Runtime action: write a DA page and sheet via the DA source API, preview via the EDS admin API, IMS auth for both | a layout page live on `aem.page` |
+| S4 | Dynamic Media OpenAPI on the program: delivery URLs for freshly approved slices, latency until deliverable, width/quality/format parameters, licensing | slices load in the preview within seconds of upload |
+| S5 | Packaging: a Playwright-built zip uploads cleanly to a CM360 sandbox; AEM keeps a direct-binary zip as one asset; which animated rendition Assets View plays (GIF vs WebP) | screenshots |
+| S6 | Live-text fidelity: exported InDesign type styles vs the browser with the web font | RMSE within the warn threshold on the sample template |
+
+## 15. Plan and effort (one engineer)
+
+| phase | scope | estimate |
+|---|---|---|
+| 0 | Spikes S1–S6 | ~1 week |
+| 1a | Starter repo: `ad` block, motion presets, `?v=` and `?export=` modes, tests | 1–1.5 weeks |
+| 1b | Capability `writeHtml5`; importer (DAM layers, DA sheet and pages, preview) | 1.5 weeks |
+| 1c | Packaging workflow (zip, budget, GIF, storyboard, fidelity) and writeback action | 1.5 weeks |
+| 1d | Modal option and gallery, DA gallery app, preflight codes, metadata/relations/renditions, e2e tests | 1 week |
+| 2 | Photoshop layer export | 1–1.5 weeks |
+| 3 | CM360 Trafficking API push (optional) | 1.5–2 weeks |
+
+InDesign to packaged, reviewable HTML5 ads: **about 6–6.5 weeks**, including spikes.
+
+### Tests
+
+* Block unit tests: motion parsing, keyframe generation, layer layout, export-mode markup (`ad.size`, `clickTag`,
+  no external URLs).
+* Worker unit tests: manifest → DA page HTML, CSV → sheet, sheet-edited detection, budget stepping, fidelity
+  scoring.
+* E2E: the debranded template with `html5=yes` on the IAB pages, run through generate, preview, packaging and
+  writeback; assert zips, renditions, relations and fidelity.
+* Manual: CM360 sandbox upload and preview.
+
+## 16. Open questions
+
+1. **Web fonts:** which brand fonts are licensed for ads served on third-party sites? This decides how much text
+   is live.
+2. **Fidelity failures:** flag only (proposed), or block packaging?
+3. **Packaging trigger:** manual button only, or also on publish (`aem.live`)?
+4. **Starter repo hosting:** a public Adobe template repo, or shared privately per customer?
