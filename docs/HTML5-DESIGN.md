@@ -139,6 +139,11 @@ row is `{ outputFileName, <label>: value…, clickthrough }`. `clickthrough` is 
 Label: it becomes the zip's default `clickTag`. Image columns hold DAM file names as today and are resolved to
 delivery URLs on import.
 
+The click-through column fills no frame or layer, so the engine drops it (`dropClickthroughColumns`) from the CSV it
+stages for the InDesign or Photoshop render, and preflight checks the same dropped CSV. Without that, the InDesign
+script's column gate (`INDD_LABEL_UNMATCHED`) fails the job, and the registered capability would have to be
+re-registered to exempt it. Only the DA sheet keeps the column.
+
 The CSV may spell the click-through column several ways; on import it is always renamed to `clickthrough`, which
 is the name the `ad` block reads. Names are compared ignoring case, spaces and punctuation, and match when they are:
 

@@ -259,6 +259,11 @@ describe('preflight: Photoshop template checks', () => {
     expect(pf.fontsFromManifest({ layers: [{ name: 'x', text: { characterStyles: [{ weird: 1 }] } }] })).toEqual([])
   })
 
+  test('a click-through column is not a layer and is never checked against one', () => {
+    const r = pf.runPsdChecks({ csvText: 'outputFileName,status,clickthru,CTA URL\na,Now,,https://x.example\n', pagemapText: PAGEMAP, manifest: manifest(), stagedFonts: [] })
+    expect(r.findings).toEqual([])
+  })
+
   test('a template with no artboards is an error', () => {
     const r = pf.runPsdChecks({ csvText: csv, pagemapText: PAGEMAP, manifest: { layers: [] }, stagedFonts: [] })
     expect(codes(r)).toContain('error:PSD_NO_ARTBOARDS')
@@ -321,4 +326,17 @@ describe('INDD template gate payload (from the registered capability script)', (
     expect(pf.sanitizeIndFindings(Array.from({ length: 100 }, () => f()))).toHaveLength(pf.MAX_STORED_FINDINGS)
     expect(pf.sanitizeIndFindings('nope')).toEqual([])
   })
+})
+
+describe('csvRecords', () => {
+  test('a cell ending in an escaped quote does not swallow the next rows', () => {
+    expect(csvRecords('a,b\n1,"say ""hi"""\n2,c\n')).toEqual(['a,b', '1,"say ""hi"""', '2,c'])
+    expect(csvRecords('a\n"x\ny"\nz\n')).toEqual(['a', '"x\ny"', 'z'])
+  })
+})
+
+test('an empty click-through cell is not an empty-cell warning', async () => {
+  const r = await check('outputFileName,status,clickthru\na,Now,\nb,Later,https://x.example\n')
+  expect(r.findings.filter((f) => f.code === 'CELL_EMPTY')).toEqual([])
+  expect(r.ok).toBe(true)
 })

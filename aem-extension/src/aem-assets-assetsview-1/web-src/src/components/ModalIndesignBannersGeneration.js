@@ -198,7 +198,10 @@ export default function ModalIndesignBannersGeneration() {
       try {
         const res = await actionWebInvoke(url, {}, { jobId });
         const body = res && res.body ? res.body : res;
-        if (res && (res.error || (res.statusCode && res.statusCode >= 400))) {
+        // A failed job is a normal status reply that carries its own `error`: only a reply with
+        // no job status is the status check itself failing.
+        const isJob = body && typeof body.status === 'string';
+        if (!isJob && res && (res.error || (res.statusCode && res.statusCode >= 400))) {
           throw new Error(res.error || `status action returned ${res.statusCode}`);
         }
         if (cancelled) return;
@@ -208,7 +211,7 @@ export default function ModalIndesignBannersGeneration() {
           setConfetti(true);
           setStatus('done');
         } else if (body.status === 'failed') {
-          setError(body.error || 'The worker reported a failure.');
+          setError(String(body.error || 'The worker reported a failure.').replace(/^generation failed:\s*/i, ''));
           setStatus('error');
         }
       } catch (e) {

@@ -12,7 +12,7 @@ function csvRecords (text) {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     record += ch
-    if (ch === '"') quoted = text[i + 1] === '"' ? quoted : !quoted
+    if (ch === '"') quoted = !quoted // an escaped "" flips twice, so it never ends the cell
     if ((ch === '\n' || (ch === '\r' && text[i + 1] !== '\n')) && !quoted) {
       if (record.replace(/\r?\n$/, '').trim()) records.push(record.replace(/\r?\n$/, ''))
       record = ''

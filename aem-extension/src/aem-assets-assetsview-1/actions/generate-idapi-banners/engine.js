@@ -453,12 +453,21 @@ async function psFetchOutput (p, tok, output) {
   return Buffer.from(await res.arrayBuffer())
 }
 
+// The click-through column is for the HTML5 ads (the DA sheet keeps it): it fills no frame or layer,
+// and the InDesign script's preflight rejects a column that names no Script Label.
+function withoutClickthrough (varText, logger) {
+  const { text, dropped } = html5.dropClickthroughColumns(varText)
+  if (dropped.length) logger.info(`click-through column(s) not sent to the render: ${dropped.join(', ')}`)
+  return text
+}
+
 // One batch of a PSD job: one create-composite call per CSV row, one JPEG per pagemap artboard.
 async function renderPsdBatch ({ params, job, logger, author, aemToken, folder, c, maxRows, rowOffset, writeEditable, writeImages = true }) {
   const staged = []
   staged.push({ dest: destFor('psd'), buf: await aemDownload(author, aemToken, `${folder}/${c.template.name}`) })
   let varText = (await aemDownload(author, aemToken, `${folder}/${c.variations.name}`)).toString('utf8')
   if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
+  varText = withoutClickthrough(varText, logger)
   const pagemapText = (await aemDownload(author, aemToken, `${folder}/${c.pagemap.name}`)).toString('utf8')
   // Images may sit in subfolders and be referenced by path; stage each under one flat name and
   // point the CSV cells at those names.
@@ -610,6 +619,7 @@ async function processBatch (params, job, state) {
     let varText = (await aemDownload(author, aemToken, folder + '/' + c.variations.name)).toString('utf8')
     const fullVarText = varText // the HTML5 variations sheet holds every row, with the cells as authored
     if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
+    varText = withoutClickthrough(varText, logger)
     // HTML5 (DA / Edge Delivery) runs with the first batch only: one design per size, rows bind at view time
     const wantHtml5 = rowOffset === 0 && /^(1|true|yes)$/i.test(String(params.writeHtml5 || ''))
     // HTML5-only run (the HTML5 button): no flattened images. The script exports the HTML5 layers before its row

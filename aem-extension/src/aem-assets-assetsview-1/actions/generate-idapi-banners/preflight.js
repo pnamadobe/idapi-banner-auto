@@ -15,6 +15,7 @@
 const { csvRecords } = require('./csv')
 const { splitRecord, pagemapNames, artboardsFromManifest, selectArtboards, mapColumns, isImageCell } = require('./psd')
 const { parseRef } = require('./images')
+const { dropClickthroughColumns } = require('./html5')
 
 const OUTPUT_COLUMN = 'outputFileName'
 const OUTNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -41,12 +42,13 @@ function collector () {
   return { findings, error: (...a) => add('error', ...a), warn: (...a) => add('warn', ...a) }
 }
 
-// CSV text -> { bom, header, rows: [{ row, cells }] }. Same record splitting the render uses.
+// CSV text -> { bom, header, rows: [{ row, cells }] }. Same record splitting the render uses, and
+// like the render it never sees a click-through column (that is for the HTML5 ads only).
 function parseCsv (csvText) {
-  const text = String(csvText || '')
-  const records = csvRecords(text)
+  const raw = String(csvText || '')
+  const records = csvRecords(dropClickthroughColumns(raw).text)
   return {
-    bom: text.charCodeAt(0) === 0xFEFF,
+    bom: raw.charCodeAt(0) === 0xFEFF,
     header: records.length ? splitRecord(records[0]).map((h) => h.trim()) : [],
     rows: records.slice(1).map((rec, i) => ({ row: i + 2, cells: splitRecord(rec) }))
   }

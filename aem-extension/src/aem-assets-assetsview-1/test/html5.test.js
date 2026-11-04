@@ -145,3 +145,21 @@ test('pagemap with an html5 column is left as authored', () => {
   expect(h.pagemapAllHtml5(PAGEMAP)).toBe(PAGEMAP)
   expect(h.pagemapHtml5(PAGEMAP).filter((p) => p.html5).length).toBe(2)
 })
+
+test('dropClickthroughColumns removes every click-through spelling and keeps the CSV intact', () => {
+  const csv = 'outputFileName,headline,clickthru,cta,cta-link\r\nA,"Hi, ""you""","https://a.example/?x=1,2",Go,https://c.example\r\nB,"two\r\nlines",,Buy,\r\n'
+  const { text, dropped } = h.dropClickthroughColumns(csv)
+  expect(dropped).toEqual(['clickthru', 'cta-link'])
+  expect(text).toBe('outputFileName,headline,cta\r\nA,"Hi, ""you""",Go\r\nB,"two\r\nlines",Buy\r\n')
+  // The DA sheet built from the dropped text has no click-through, the original keeps it.
+  expect(h.variationsSheet(text).data[0]).toEqual({ outputFileName: 'A', headline: 'Hi, "you"', cta: 'Go' })
+  expect(h.variationsSheet(csv).data[0].clickthrough).toBe('https://a.example/?x=1,2')
+})
+
+test('dropClickthroughColumns: no click-through column, no change; a row left empty keeps its place', () => {
+  const plain = 'outputFileName,headline\nA,Hi\n'
+  expect(h.dropClickthroughColumns(plain)).toEqual({ text: plain, dropped: [] })
+  expect(h.dropClickthroughColumns('')).toEqual({ text: '', dropped: [] })
+  expect(h.dropClickthroughColumns('Landing Page URL\nhttps://x\n')).toEqual({ text: '""\n""\n', dropped: ['Landing Page URL'] })
+  expect(h.dropClickthroughColumns('outputFileName,Exit URL\nA,https://x').text).toBe('outputFileName\nA')
+})

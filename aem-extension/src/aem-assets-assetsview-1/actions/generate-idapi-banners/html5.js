@@ -6,7 +6,7 @@
 //   size | 300x250 | duration 6 | loops 2 | rows /ads/<template>/<campaign>/variations.json
 //   name | image|text | source | x,y,w,h | motion | style
 const { csvRecords } = require('./csv')
-const { rowsFromRecords } = require('./psd')
+const { rowsFromRecords, splitRecord } = require('./psd')
 
 const PRESETS = ['none', 'fade', 'fadeUp', 'fadeDown', 'slideLeft', 'slideRight', 'wipe', 'zoomIn', 'kenburns', 'pulse']
 const CANONICAL = Object.fromEntries(PRESETS.map((p) => [p.toLowerCase(), p]))
@@ -180,6 +180,23 @@ function readDaPage (html) {
   return out
 }
 
+// The variations CSV without its click-through column(s), for the InDesign/Photoshop render: a link
+// fills no frame or layer, and the render's preflight rejects a column that names none. Returns
+// { text, dropped }; text is the input unchanged when no column is a click-through one.
+function dropClickthroughColumns (csvText) {
+  const text = String(csvText || '')
+  const records = csvRecords(text)
+  if (!records.length) return { text, dropped: [] }
+  const header = splitRecord(records[0])
+  const drop = new Set(header.map((h, i) => (isClickthroughColumn(h.trim()) ? i : -1)).filter((i) => i >= 0))
+  if (!drop.size) return { text, dropped: [] }
+  const quote = (v) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n'
+  // A row left with no cells keeps one empty cell, so the render still counts it.
+  const out = records.map((rec) => splitRecord(rec).filter((_, i) => !drop.has(i)).map(quote).join(',') || '""')
+  return { text: out.join(eol) + (/\r?\n$/.test(text) ? eol : ''), dropped: [...drop].map((i) => header[i].trim()) }
+}
+
 // Variations CSV -> DA sheet JSON. Image cells resolve through resolveImage(value, column)
 // (returns a delivery URL or the value unchanged).
 function variationsSheet (csvText, resolveImage = (v) => v) {
@@ -250,6 +267,7 @@ module.exports = {
   readDaPage,
   variationsSheet,
   isClickthroughColumn,
+  dropClickthroughColumns,
   sheetEdited,
   daConfig,
   campaignPaths,

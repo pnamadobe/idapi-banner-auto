@@ -116,9 +116,10 @@ Notes:
 
 HTML5 banners need a URL to open when the ad is clicked. Put it in a column with
 one of the names below. The column is never placed in the layout (it is not a
-Script Label), and the JPG/PNG and `.indd` outputs ignore it. In the Document
-Authoring sheet it is always named `clickthrough`, and in a CM360 export it
-becomes the ad's `clickTag`.
+Script Label or layer name): it is removed from the CSV before the InDesign or
+Photoshop render, so it is not reported as an unmatched column, and an empty cell
+in it is not a warning. In the Document Authoring sheet it is always named
+`clickthrough`, and in a CM360 export it becomes the ad's `clickTag`.
 
 **How names are matched:** case, spaces and punctuation are ignored, so
 `cta-url`, `CTA URL`, `cta_url`, `CTA.Url` and `ctaUrl` are all the same name.
