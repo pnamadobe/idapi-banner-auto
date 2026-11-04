@@ -100,7 +100,7 @@
         // Any *.csv with "pagemap" in its name inside the input folder (or an
         // explicit $.global.BRAND_PAGEMAP). Columns: pagenumber,pagename.
         // If none is found, pages fall back to a padded number (01, 02, 03, ...).
-        var pageMap = {}, pmName = "(none; padded numbers)";
+        var pageMap = {}, pageHtml5 = {}, pmName = "(none; padded numbers)";
         var pmFile = null;
         try { if ($.global.BRAND_PAGEMAP) { var pmo = new File(String($.global.BRAND_PAGEMAP)); if (pmo.exists) pmFile = pmo; } } catch (e) {}
         if (!pmFile) {
@@ -115,6 +115,7 @@
             for (var pmr = 0; pmr < pm.rows.length; pmr++) {
                 var pn = U.trim(pm.rows[pmr]["pagenumber"]);
                 if (pn) pageMap[pn] = U.trim(pm.rows[pmr]["pagename"]);
+                if (pn && /^(y|yes|true|1|x)$/i.test(U.trim(pm.rows[pmr]["html5"] || ""))) pageHtml5[pn] = true;
             }
             pmName = pmFile.name;
         }
@@ -376,6 +377,134 @@
             }
         }
 
+        // ---- HTML5 manifest (cloud, "writeHtml5" in the parameters blob; first batch only).
+        // For every page marked html5=yes in the page map, walk the page items back to front:
+        // each labelled item becomes an element (box, style, crop) the `ad` block re-creates live;
+        // each run of consecutive unlabelled items is exported once as a transparent PNG slice
+        // ("static-0", "static-1", ...) with everything else hidden. Runs on the template's own
+        // design, before any CSV row is applied. Slices are full-page; the orchestrator places them.
+        var html5Json = [];
+        function itemLabel(it) {
+            var lb = "";
+            try { lb = String(it.label || ""); } catch (e) {}
+            if (!lb) { try { if (it.graphics && it.graphics.length > 0) lb = String(it.graphics[0].label || ""); } catch (e2) {} }
+            return U.trim(lb);
+        }
+        function hasInnerLabel(it) {
+            try { var all = it.allPageItems; for (var q = 0; q < all.length; q++) { if (U.trim(String(all[q].label || ""))) return true; } } catch (e) {}
+            return false;
+        }
+        function colorHex(c) {
+            try {
+                if (!c || !c.isValid || c.name === "None" || !c.colorValue) return "";
+                var v = c.colorValue, rgb;
+                if (c.space === ColorSpace.RGB) rgb = [v[0], v[1], v[2]];
+                else if (c.space === ColorSpace.CMYK) { var k = 1 - v[3] / 100; rgb = [255 * (1 - v[0] / 100) * k, 255 * (1 - v[1] / 100) * k, 255 * (1 - v[2] / 100) * k]; }
+                else return "";
+                var h = "#";
+                for (var ch = 0; ch < 3; ch++) { var n = Math.max(0, Math.min(255, Math.round(rgb[ch]))); h += (n < 16 ? "0" : "") + n.toString(16); }
+                return h;
+            } catch (e) { return ""; }
+        }
+        function boxJson(b, pb) { // geometricBounds [y1,x1,y2,x2] -> page-relative px
+            return '{"x":' + (b[1] - pb[1]) + ',"y":' + (b[0] - pb[0]) + ',"w":' + (b[3] - b[1]) + ',"h":' + (b[2] - b[0]) + '}';
+        }
+        function textStyleJson(tf, label) {
+            var parts = [];
+            try {
+                var t = tf.texts[0];
+                var fam = "", sty = "";
+                try { fam = String(t.appliedFont.fontFamily); sty = String(t.appliedFont.fontStyleName || t.fontStyle || ""); } catch (eF) { try { fam = String(t.appliedFont).split("\t")[0]; sty = String(t.fontStyle || ""); } catch (eF2) {} }
+                if (fam) parts.push('"font":' + jesc(fam));
+                if (/italic|oblique/i.test(sty)) { parts.push('"italic":true'); sty = U.trim(sty.replace(/italic|oblique/ig, "")); }
+                if (sty) parts.push('"weight":' + jesc(sty));
+                if (typeof t.pointSize === "number") parts.push('"size":' + t.pointSize);
+                if (typeof t.leading === "number") parts.push('"lead":' + t.leading);
+                var fc = colorHex(t.fillColor); if (fc) parts.push('"color":' + jesc(fc));
+                if (t.justification === Justification.CENTER_ALIGN) parts.push('"align":"center"');
+                else if (t.justification === Justification.RIGHT_ALIGN) parts.push('"align":"right"');
+                if (t.capitalization === Capitalization.ALL_CAPS) parts.push('"caps":true');
+                if (t.tracking) parts.push('"track":' + t.tracking);
+            } catch (eT) {}
+            var bg = colorHex(tf.fillColor);
+            if (bg) parts.push('"bg":' + jesc(bg));
+            try { if (tf.topLeftCornerOption !== CornerOptions.NONE && tf.topLeftCornerRadius > 0) parts.push('"radius":' + tf.topLeftCornerRadius); } catch (eR) {}
+            try {
+                var vj = tf.textFramePreferences.verticalJustification;
+                if (vj === VerticalJustification.CENTER_ALIGN) parts.push('"valign":"middle"');
+                else if (vj === VerticalJustification.BOTTOM_ALIGN) parts.push('"valign":"bottom"');
+            } catch (eV) {}
+            if (bg && /^cta/i.test(label)) parts.push('"button":true');
+            return "{" + parts.join(",") + "}";
+        }
+        function writeHtml5() {
+            var savedT = app.pngExportPreferences.transparentBackground, savedR = app.pngExportPreferences.exportResolution;
+            app.pngExportPreferences.transparentBackground = true;
+            app.pngExportPreferences.exportResolution = 144;
+            try {
+                for (var hp = 0; hp < doc.pages.length; hp++) {
+                    if (!pageHtml5[String(hp + 1)]) continue;
+                    var page = doc.pages.item(hp), pname = pageNameOf(page, hp), pb = page.bounds;
+                    var items = page.pageItems.everyItem().getElements().reverse(); // back to front
+                    var units = [], run = null;
+                    for (var u = 0; u < items.length; u++) {
+                        var it = items[u], lb = itemLabel(it);
+                        if (lb) { units.push({ label: lb, item: it, z: u }); run = null; continue; }
+                        if (hasInnerLabel(it)) warn.push(pname + ": HTML5 labelled item inside a group is baked into a static slice");
+                        if (!run) { run = { items: [], z: u }; units.push(run); }
+                        run.items.push(it);
+                    }
+                    var slices = [], elements = [], sliceIdx = 0;
+                    var relDir = U.CONFIG.outputRel + "/html5/" + pname, dir = new Folder(U.root + "/" + relDir);
+                    if (!dir.exists) dir.create();
+                    var master = null;
+                    for (var s = 0; s < units.length; s++) {
+                        var un = units[s];
+                        if (un.label) {
+                            var tgt = resolveImageTarget(un.item), isText = false;
+                            try { isText = un.item.constructor.name === "TextFrame"; } catch (eC) {}
+                            var fb = (isText ? un.item : tgt.frame).geometricBounds, ej = '{"label":' + jesc(un.label) + ',"z":' + un.z + ',"box":' + boxJson(fb, pb);
+                            if (isText) ej += ',"kind":"text","style":' + textStyleJson(un.item, un.label);
+                            else {
+                                ej += ',"kind":"image"';
+                                try {
+                                    var gb = tgt.graphic.geometricBounds, gw = gb[3] - gb[1], gh = gb[2] - gb[0];
+                                    var fx = ((fb[1] + fb[3]) / 2 - gb[1]) / gw * 100, fy = ((fb[0] + fb[2]) / 2 - gb[0]) / gh * 100;
+                                    ej += ',"crop":{"fx":' + Math.round(fx * 10) / 10 + ',"fy":' + Math.round(fy * 10) / 10 + '}';
+                                } catch (eG) {}
+                            }
+                            elements.push(ej + "}");
+                            continue;
+                        }
+                        // hide everything that is not in this run, export, restore
+                        var hidden = [];
+                        for (var a = 0; a < items.length; a++) {
+                            var keep = false;
+                            for (var b2 = 0; b2 < un.items.length; b2++) { if (un.items[b2] === items[a]) { keep = true; break; } }
+                            try { if (!keep && items[a].visible) { items[a].visible = false; hidden.push(items[a]); } } catch (eH) { warn.push(pname + ": HTML5 could not hide an item (locked?)"); }
+                        }
+                        // master items belong to the back-most slice only
+                        if (sliceIdx > 0 && master === null) { try { master = page.appliedMaster; page.appliedMaster = NothingEnum.NOTHING; } catch (eM) { master = false; } }
+                        var sname = "static-" + sliceIdx, srel = relDir + "/" + sname + ".png";
+                        try {
+                            app.pngExportPreferences.pageString = page.name;
+                            doc.exportFile(ExportFormat.PNG_FORMAT, new File(U.root + "/" + srel));
+                            slices.push('{"name":' + jesc(sname) + ',"file":' + jesc(srel) + ',"z":' + un.z + ',"box":{"x":0,"y":0,"w":' + (pb[3] - pb[1]) + ',"h":' + (pb[2] - pb[0]) + '}}');
+                            outFiles.push(srel);
+                        } catch (eX) { warn.push(pname + ": HTML5 slice " + sname + " failed: " + eX); }
+                        for (var hh = 0; hh < hidden.length; hh++) { try { hidden[hh].visible = true; } catch (eU) {} }
+                        sliceIdx++;
+                    }
+                    if (master) { try { page.appliedMaster = master; } catch (eM2) { warn.push(pname + ": HTML5 could not restore master"); } }
+                    html5Json.push(jesc(pname) + ':{"width":' + (pb[3] - pb[1]) + ',"height":' + (pb[2] - pb[0]) + ',"slices":[' + slices.join(",") + '],"elements":[' + elements.join(",") + ']}');
+                }
+            } finally {
+                app.pngExportPreferences.transparentBackground = savedT;
+                app.pngExportPreferences.exportResolution = savedR;
+            }
+        }
+        if (paramFlag("writeHtml5")) writeHtml5();
+
         for (var r = 0; r < csv.rows.length; r++) {
             var row = csv.rows[r];
             var stem = U.trim(row[C.file] || ("row" + (r + 1)));
@@ -463,7 +592,7 @@
         var fontsJson = [];
         for (var fk = 0; fk < fontReport.length; fk++) fontsJson.push('{"name":' + jesc(fontReport[fk].name) + ',"status":' + jesc(fontReport[fk].label) + '}');
         var pfJson = gateOn && gateFacts ? ',"preflight":{"facts":' + gateFacts + ',"findings":[' + gateFindings.join(",") + ']}' : "";
-        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + '],"links":{' + linkMaps.join(",") + '}' + pfJson + '}');
+        rf.write('{"images":' + written + ',"indd":' + inddWritten + ',"rows":' + csv.rows.length + ',"warnings":' + warn.length + ',"fonts":[' + fontsJson.join(",") + '],"links":{' + linkMaps.join(",") + '}' + pfJson + (html5Json.length ? ',"html5":{' + html5Json.join(",") + '}' : "") + '}');
         rf.close();
         return successPkg(outFiles, resultRel);
     } catch (e) {

@@ -22,6 +22,8 @@ const images = require('./images')
 const { attachPreview, previewKey } = require('./renditions')
 const { classify } = require('./classify')
 const { csvRecords } = require('./csv')
+const html5 = require('./html5')
+const { publishHtml5, sliceOf } = require('./da')
 const { runPreflight, runPsdChecks, missingInputs, summarize, parsePreflightPayload, sanitizeIndFindings, MAX_STORED_FINDINGS } = require('./preflight')
 const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
 
@@ -601,7 +603,10 @@ async function processBatch (params, job, state) {
     const templateBuf = await aemDownload(author, aemToken, folder + '/' + c.template.name)
     staged.push({ dest: destFor('template'), buf: templateBuf })
     let varText = (await aemDownload(author, aemToken, folder + '/' + c.variations.name)).toString('utf8')
+    const fullVarText = varText // the HTML5 variations sheet holds every row, with the cells as authored
     if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
+    // HTML5 (DA / Edge Delivery) runs with the first batch only: one design per size, rows bind at view time
+    const wantHtml5 = rowOffset === 0 && /^(1|true|yes)$/i.test(String(params.writeHtml5 || ''))
     // swapped images: job-folder images, images in its subfolders (referenced by path or by name), plus
     // those AEM-linked in the template that the CSV references. Each is staged under one flat name and
     // the CSV cells are rewritten to those names.
@@ -650,7 +655,7 @@ async function processBatch (params, job, state) {
     // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
     // The template checks run once, in the first batch, inside the capability script (needs the re-registered script).
     const gate = rowOffset === 0 ? { preflightGate: '1', ...(params.preflightOverride === '1' ? { preflightOverride: '1' } : {}) } : {}
-    const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate })
+    const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate, ...(wantHtml5 ? { writeHtml5: '1' } : {}) })
 
     // 5. write outputs back to AEM <folder>/output (unpublished → review)
     const outFolder = (job && job.outputFolder) || folder + '/output'
@@ -663,17 +668,22 @@ async function processBatch (params, job, state) {
     let linkMap = {}
     const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
     let gateFindings = []
+    let html5Manifest = null
+    const html5Slices = new Map() // '<page>/static-N.png' -> rendered output URL
     if (rj) {
       try {
         const resultJson = await (await fetch(rj.url)).json()
         linkMap = resultJson.links || {}
         gateFindings = sanitizeIndFindings(resultJson.preflight && resultJson.preflight.findings)
+        html5Manifest = resultJson.html5 || null
       } catch (e) { logger.warn(`result.json unreadable: ${e.message}`) }
     }
     for (const f of gateFindings) logger.warn(`preflight ${f.severity} ${f.code}: ${f.message}`)
     for (const o of outputs) {
       const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
       if (name === 'result.json') continue
+      const slice = sliceOf(o.src)
+      if (slice) { html5Slices.set(`${slice.page}/${slice.file}`, o.url); continue } // published by step 5c
       if (job && (job.outputs || []).includes(name)) continue
       // Editable-only run: the rendered page images are not delivered. The first page's JPG is still kept in
       // memory as the .indd's AEM preview (see attachPreview below); every other image is skipped unfetched.
@@ -752,6 +762,45 @@ async function processBatch (params, job, state) {
     }
     if (remapWarnings.length) logger.warn(`remap warnings: ${remapWarnings.join(' | ')}`)
 
+    // 5c. HTML5: slices to AEM (approved, for Dynamic Media delivery), one DA page per size plus the
+    // variations sheet, then an EDS preview. The JPGs are already written, so every failure only warns.
+    let html5Result
+    if (wantHtml5) {
+      try {
+        let override = {}
+        try { override = JSON.parse((await aemDownload(author, aemToken, `${folder}/html5.json`)).toString('utf8')) } catch (e) { /* no job-folder override */ }
+        const cfg = html5.daConfig(params, override)
+        const ids = new Map()
+        const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
+        html5Result = await publishHtml5({
+          cfg,
+          daToken: params.DA_TOKEN || idTok,
+          edsToken: params.EDS_ADMIN_TOKEN || '',
+          author,
+          aemToken,
+          outFolder,
+          folder,
+          campaign: folder.split('/').pop(),
+          manifest: html5Manifest,
+          pagemapText: pagemapBuf.toString('utf8'),
+          csvText: fullVarText,
+          slices: html5Slices,
+          imageSource: new Map([...plan.resolved.map((r) => [r.ref, r.damPath]), ...aemSource]),
+          state,
+          logger,
+          deps: {
+            upload: (dir, name, buf, mime) => aemUpload(author, aemToken, dir, name, buf, mime),
+            assetId: idOf,
+            fetchBuf: async (url) => Buffer.from(await (await fetch(url)).arrayBuffer())
+          }
+        })
+        logger.info(`html5: ${html5Result.pages.length} page(s) previewed, ${html5Result.warnings.length} warning(s)`)
+      } catch (e) {
+        html5Result = { pages: [], warnings: [{ code: e.code || 'HTML5_DA_ERROR', message: e.message }] }
+        logger.warn(`html5 publish failed: ${e.message}`)
+      }
+    }
+
     // 6. tidy up the staged inputs — the render is done and outputs are in AEM.
     try { await files.delete(`${prefix}/`) } catch (e) { logger.warn(`staging cleanup failed: ${e.message}`) }
 
@@ -783,6 +832,7 @@ async function processBatch (params, job, state) {
         relationWarnings,
         renditionsCreated,
         renditionWarnings,
+        ...(html5Result ? { html5: html5Result } : {}),
         outputs: written
       }
     }
