@@ -44,8 +44,12 @@ async function deterministicJobId(folder, mode, template) {
 
 const MAX_SHOWN_FINDINGS = 10;
 
+// DA folder of an HTML5 job: the job's own record, else where preflight says the pages would go.
+const html5FolderUrl = (r, estimate) => (r && r.html5Folder && r.html5Folder.daUrl)
+  || (estimate && estimate.html5Site && estimate.html5Path ? `https://da.live/#/${estimate.html5Site}${estimate.html5Path}` : '');
+
 // HTML5 results: EDS preview links per size, then the CM360 packaging control.
-function Html5Panel({ html5, jobId, token }) {
+function Html5Panel({ html5, jobId, token, folderUrl }) {
   const [pkg, setPkg] = useState(null);
   const [pkgError, setPkgError] = useState('');
   const url = resolveActionUrl('generate-idapi-banners-package');
@@ -74,6 +78,7 @@ function Html5Panel({ html5, jobId, token }) {
     <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
       <Flex direction="column" gap="size-75">
         <Text><b>HTML5 banners</b> ({pages.length} size{pages.length === 1 ? '' : 's'}) — preview on EDS:</Text>
+        {folderUrl && <Text><a href={folderUrl} target="_blank" rel="noopener noreferrer">Open the HTML5 folder in Document Authoring ↗</a></Text>}
         {pages.map((p) => (
           <Text key={p.page}>
             {p.previewUrl ? <a href={p.previewUrl} target="_blank" rel="noopener noreferrer">{p.page} ↗</a> : p.page}
@@ -139,6 +144,8 @@ export default function ModalIndesignBannersGeneration() {
   const [override, setOverride] = useState(false);
   const notFoundPolls = useRef(0);
   const [confetti, setConfetti] = useState(false);
+  const [html5Run, setHtml5Run] = useState(false);
+  const [lastHtml5, setLastHtml5] = useState(null); // a completed HTML5 job for this folder, so it can be packaged later
 
   useEffect(() => {
     (async () => {
@@ -165,6 +172,21 @@ export default function ModalIndesignBannersGeneration() {
   };
 
   useEffect(() => { inspect(); }, [folder, template, aemAuthorUrl]);
+
+  // Look up this folder's HTML5 job so "Package for CM360" is reachable after the generation dialog was closed.
+  useEffect(() => {
+    const url = resolveActionUrl('generate-idapi-banners-status');
+    if (!folder || !url || /\.psd$/i.test(template)) return undefined;
+    let cancelled = false;
+    deterministicJobId(folder, 'html5', template)
+      .then((id) => actionWebInvoke(url, {}, { jobId: id }))
+      .then((res) => {
+        const body = res && res.body ? res.body : res;
+        if (!cancelled && body && body.status === 'completed' && body.html5) setLastHtml5(body);
+      })
+      .catch(() => { /* no HTML5 job yet */ });
+    return () => { cancelled = true; };
+  }, [folder, template]);
 
   // Key on the job id, not the result object: each poll replaces `result`, which would
   // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
@@ -233,6 +255,7 @@ export default function ModalIndesignBannersGeneration() {
     // The Runtime action keeps running to completion even after the UI stops waiting.
     const params = { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'both' || mode === 'editable' ? '1' : '' };
     if (mode === 'html5') params.writeHtml5 = '1';
+    setHtml5Run(mode === 'html5');
     if (override && hasErrors) params.preflightOverride = '1';
     const call = actionWebInvoke(url, {}, params)
       .then((r) => ({ done: true, r }))
@@ -312,6 +335,7 @@ export default function ModalIndesignBannersGeneration() {
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
             {error && <Text><b>{error}</b></Text>}
+            {lastHtml5 && <Html5Panel html5={lastHtml5.html5} jobId={lastHtml5.jobId} token={job.token} folderUrl={html5FolderUrl(lastHtml5, estimate)} />}
             {findings.length > 0 && <FindingsPanel findings={findings} />}
             {hasErrors && (
               <Checkbox isSelected={override} onChange={setOverride}>
@@ -340,20 +364,32 @@ export default function ModalIndesignBannersGeneration() {
         {status === 'started' && (
           <Flex direction="column" gap="size-150">
             <Heading level={3}>✓ Generation started</Heading>
-            <Text>
-              Your banners are rendering on the {/\.psd$/i.test(template) ? 'Adobe Photoshop API' : 'Adobe InDesign API'} and will appear in
-              <b> {(result && result.outputFolder) || `${folder}/output`}</b> in a few minutes — unpublished, ready for your review.
-              You can close this dialog; the job keeps running in the background.
-            </Text>
+            {html5Run ? (
+              <Text>
+                Your HTML5 banners are being published as Document Authoring pages
+                in <b>{(result && result.html5Folder && result.html5Folder.site) || (estimate && estimate.html5Site) || 'pnamadobe/banner-ads'}</b> under
+                <b> {(result && result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || '/ads'}</b>, previewed on EDS, in a few minutes.
+                Keep this dialog open to get the preview links and the <b>Package for CM360</b> button; if you close it, reopen <b>Generate Banners</b> on this template later to package.
+              </Text>
+            ) : (
+              <Text>
+                Your banners are rendering on the {/\.psd$/i.test(template) ? 'Adobe Photoshop API' : 'Adobe InDesign API'} and will appear in
+                <b> {(result && result.outputFolder) || `${folder}/output`}</b> in a few minutes — unpublished, ready for your review.
+                You can close this dialog; the job keeps running in the background.
+              </Text>
+            )}
             {result && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
                 <Flex direction="column" gap="size-100">
                   <Text><b>Status:</b> {result.status || 'queued'}</Text>
-                  <Text><b>Verified outputs:</b> {result.count || 0}</Text>
+                  {!html5Run && <Text><b>Verified outputs:</b> {result.count || 0}</Text>}
                 </Flex>
               </View>
             )}
-            {result && result.outputUrl && (
+            {html5Run && html5FolderUrl(result, estimate) && (
+              <Text><a href={html5FolderUrl(result, estimate)} target="_blank" rel="noopener noreferrer">Open the HTML5 folder in Document Authoring ↗</a></Text>
+            )}
+            {!html5Run && result && result.outputUrl && (
               <Text><a href={result.outputUrl} target="_blank" rel="noopener noreferrer">Open the output folder in Assets View ↗</a></Text>
             )}
             {result && result.jobId && (
@@ -388,9 +424,11 @@ export default function ModalIndesignBannersGeneration() {
               {result.reused
                 ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
                 : 'The generation completed successfully.'}
-              {' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.
+              {result.writeHtml5
+                ? <>{' '}Pages are in Document Authoring under <b>{(result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || '/ads'}</b> (image slices in <b>{result.outputFolder}/html5</b>).</>
+                : <>{' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.</>}
             </Text>
-            {result.outputUrl && (
+            {!result.writeHtml5 && result.outputUrl && (
               <Text><a href={result.outputUrl} target="_blank" rel="noopener noreferrer">Open the output folder in Assets View ↗</a></Text>
             )}
             {result.jobId && (
@@ -399,7 +437,7 @@ export default function ModalIndesignBannersGeneration() {
                 <Text>Keep this ID if you need to check the manifest or troubleshoot the generation.</Text>
               </View>
             )}
-            {result.html5 && <Html5Panel html5={result.html5} jobId={result.jobId} token={job.token} />}
+            {result.html5 && <Html5Panel html5={result.html5} jobId={result.jobId} token={job.token} folderUrl={html5FolderUrl(result, estimate)} />}
             {result.writeHtml5 && !result.html5 && <Text>HTML5 pages were not published for this job; check the job warnings.</Text>}
             {Array.isArray(result.outputs) && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-2000" overflow="auto">

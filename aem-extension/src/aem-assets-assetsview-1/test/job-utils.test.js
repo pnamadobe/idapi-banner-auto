@@ -28,3 +28,13 @@ test('publicJob exposes html5 only for HTML5 jobs', () => {
   expect(publicJob({ ...base, writeHtml5: true, html5 })).toMatchObject({ writeHtml5: true, html5 })
   expect(publicJob({ ...base, writeHtml5: true }).html5).toBeNull()
 })
+
+describe('publicJob html5Folder', () => {
+  test('HTML5 jobs expose their DA folder', () => {
+    const f = { site: 'pnamadobe/banner-ads', path: '/ads/t/c', daUrl: 'https://da.live/#/pnamadobe/banner-ads/ads/t/c' }
+    expect(publicJob({ jobId: 'x', writeHtml5: true, html5Folder: f }).html5Folder).toEqual(f)
+  })
+  test('image jobs do not', () => {
+    expect(publicJob({ jobId: 'x', html5Folder: { path: '/ads' } }).html5Folder).toBeUndefined()
+  })
+})

@@ -66,6 +66,14 @@ async function main (params) {
       delete job.findings
       if (checked) job.findings = checked.findings.slice(0, MAX_STORED_FINDINGS)
     }
+    // Where an HTML5 job's DA pages go, so the modal can link the DA folder as soon as the job starts.
+    const html5Folder = (tpl) => {
+      try {
+        const cfg = daConfig(params)
+        const base = campaignPaths(cfg, params.folder.split('/').pop(), tpl).base
+        return { site: `${cfg.org}/${cfg.site}`, path: base, daUrl: `https://da.live/#/${cfg.org}/${cfg.site}${base}` }
+      } catch (e) { return undefined }
+    }
     const state = await stateLib.init()
     const { editable: writeIndd, images: writeImages, html5: writeHtml5 } = outputMode(params)
     if (writeHtml5 && /\.psd$/i.test(template)) return errorResponse(400, 'HTML5 banners need an InDesign template for now', logger)
@@ -83,6 +91,7 @@ async function main (params) {
       if (blocked) return blocked
       stamp(job)
       job.writeImages = writeImages // jobs saved before HTML5 runs dropped the flattened images
+      if (writeHtml5) job.html5Folder = html5Folder((checked && checked.template) || job.template)
       if (stale) {
         if (forced) await state.delete(`${stateKey}-lock`)
         job.status = 'queued'
@@ -123,6 +132,7 @@ async function main (params) {
       writeIndd,
       writeImages,
       writeHtml5,
+      ...(writeHtml5 ? { html5Folder: html5Folder((checked && checked.template) || template) } : {}),
       batchSize: Math.max(1, Math.min(10, Number(params.batchSize) || 2)),
       outputFolder: await resolveOutputFolder(params),
       rowOffset: 0,

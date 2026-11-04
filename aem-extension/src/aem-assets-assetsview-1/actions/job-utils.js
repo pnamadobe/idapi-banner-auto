@@ -25,7 +25,7 @@ const publicJob = (job) => ({
   status: job.status,
   count: (job.outputs || []).filter(isDeliverable).length,
   error: job.error,
-  ...(job.writeHtml5 ? { writeHtml5: true, html5: job.html5 || null } : {}),
+  ...(job.writeHtml5 ? { writeHtml5: true, html5: job.html5 || null, ...(job.html5Folder ? { html5Folder: job.html5Folder } : {}) } : {}),
   ...(job.findings && job.findings.length ? { findings: job.findings } : {})
 })
 
