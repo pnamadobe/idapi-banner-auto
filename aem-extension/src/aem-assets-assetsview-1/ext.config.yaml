@@ -36,10 +36,6 @@ runtimeManifest:
             # "Document Fonts/"). Optional per-job <folder>/fonts overrides it.
             AEM_FONTS_PATH: $AEM_FONTS_PATH
             ASSETS_VIEW_TENANT: $ASSETS_VIEW_TENANT
-            DA_ORG: $DA_ORG
-            DA_SITE: $DA_SITE
-            DA_ADS_ROOT: $DA_ADS_ROOT
-            EDS_REF: $EDS_REF
           limits:
             timeout: 600000      # 10 min — render + AEM write-back is long-running
             memorySize: 512
@@ -71,10 +67,6 @@ runtimeManifest:
             # action passes their IMS token through; it is never stored). Optional overrides:
             # DA_TOKEN (a token DA accepts for this site), EDS_ADMIN_TOKEN (an EDS admin API key).
             # The render service token is never used for DA.
-            DA_ORG: $DA_ORG
-            DA_SITE: $DA_SITE
-            DA_ADS_ROOT: $DA_ADS_ROOT
-            EDS_REF: $EDS_REF
             DA_TOKEN: $DA_TOKEN
             EDS_ADMIN_TOKEN: $EDS_ADMIN_TOKEN
           limits:
@@ -104,11 +96,6 @@ runtimeManifest:
             AEM_AUTHOR_URL: $AEM_AUTHOR_URL
             AEM_SC_JSON: $AEM_SC_JSON
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
-            DA_ORG: $DA_ORG
-            DA_SITE: $DA_SITE
-            DA_ADS_ROOT: $DA_ADS_ROOT
-            EDS_REF: $EDS_REF
-            GITHUB_REPO: $GITHUB_REPO
             GITHUB_DISPATCH_TOKEN: $GITHUB_DISPATCH_TOKEN
             HTML5_WRITEBACK_SECRET: $HTML5_WRITEBACK_SECRET
             HTML5_WRITEBACK_URL: $HTML5_WRITEBACK_URL

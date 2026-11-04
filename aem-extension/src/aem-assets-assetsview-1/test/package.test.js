@@ -33,7 +33,7 @@ test('safeName allows bare file names only', () => {
 })
 
 test('buildAds crosses html5 sizes with rows and finds backups', () => {
-  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, outputs: ['MedRect_300x250_Spring.jpg'], cfg: daConfig({}), campaign: 'Spring Sale' })
+  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, outputs: ['MedRect_300x250_Spring.jpg'], cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale' })
   expect(ads.map((a) => a.name)).toEqual(['MedRect_300x250_Spring', 'MedRect_300x250_Summer', 'Half_300x600_Spring', 'Half_300x600_Summer'])
   expect(ads[0]).toEqual({ page: 'MedRect_300x250', path: '/ads/spring-sale/medrect-300x250', row: 'Spring', budgetKB: 120, name: 'MedRect_300x250_Spring', backup: 'MedRect_300x250_Spring.jpg' })
   expect(ads[1].backup).toBeUndefined()
@@ -41,12 +41,12 @@ test('buildAds crosses html5 sizes with rows and finds backups', () => {
 })
 
 test('buildAds narrows by pages and rows', () => {
-  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({}), campaign: 'c', pages: ['Half_300x600'], rows: ['Summer'] })
+  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'c', pages: ['Half_300x600'], rows: ['Summer'] })
   expect(ads.map((a) => a.name)).toEqual(['Half_300x600_Summer'])
 })
 
 test('buildAds puts ads under the template sub-folder', () => {
-  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({}), campaign: 'Spring Sale', template: 'United Summer.indd', pages: ['Half_300x600'], rows: ['Summer'] })
+  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale', template: 'United Summer.indd', pages: ['Half_300x600'], rows: ['Summer'] })
   expect(ads[0].path).toBe('/ads/united-summer/spring-sale/half-300x600')
 })
 

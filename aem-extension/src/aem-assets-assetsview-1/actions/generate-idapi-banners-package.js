@@ -7,9 +7,8 @@ const crypto = require('crypto')
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
 const { errorResponse, getBearerToken, stringParameters } = require('./utils')
-const { aemContext, aemDownload, aemApiPath, aemListSafe, jobManifestName } = require('./generate-idapi-banners/engine')
+const { aemContext, aemDownload, aemApiPath, aemListSafe, jobManifestName, html5SiteFor } = require('./generate-idapi-banners/engine')
 const { classify } = require('./generate-idapi-banners/classify')
-const html5 = require('./generate-idapi-banners/html5')
 const pkg = require('./generate-idapi-banners/package')
 
 const TTL = 7 * 24 * 3600
@@ -76,9 +75,14 @@ async function main (params) {
     const entries = await aemListSafe(jobAuthor, aemToken, job.folder)
     const c = classify(entries, job.template)
     if (!c.pagemap || !c.variations) return errorResponse(422, 'the job folder has no pagemap or variations CSV', logger)
-    let override = {}
-    try { override = JSON.parse((await aemDownload(jobAuthor, aemToken, `${job.folder}/html5.json`)).toString('utf8')) } catch (e) { /* none */ }
-    const cfg = html5.daConfig(params, override)
+    // The site comes from the campaign folder's html5.json, as for the HTML5 run itself.
+    let cfg
+    try {
+      cfg = await html5SiteFor(jobAuthor, aemToken, job.folder)
+    } catch (e) {
+      if (e.code === 'HTML5_NO_SITE') return errorResponse(422, e.message, logger)
+      throw e
+    }
     const ads = pkg.buildAds({
       pagemapText: (await aemDownload(jobAuthor, aemToken, `${job.folder}/${c.pagemap.name}`)).toString('utf8'),
       csvText: (await aemDownload(jobAuthor, aemToken, `${job.folder}/${c.variations.name}`)).toString('utf8'),
@@ -97,7 +101,7 @@ async function main (params) {
     const now = new Date().toISOString()
     await state.put(pkgKey, JSON.stringify({ jobId, run, outFolder, ads, results: {}, status: 'running', createdAt: now, updatedAt: now }), { ttl: TTL })
     const token = pkg.mintToken(params.HTML5_WRITEBACK_SECRET, { job: jobId, run, outFolder, template: job.template })
-    const repo = params.GITHUB_REPO || `${cfg.org}/${cfg.site}`
+    const repo = cfg.repo
     try {
       await pkg.dispatch(repo, params.GITHUB_DISPATCH_TOKEN, { job: jobId, origin: cfg.previewOrigin, ads, writeback: { url: writebackUrl(params), token } })
     } catch (e) {

@@ -2,7 +2,7 @@ const da = require('../actions/generate-idapi-banners/da')
 const { daConfig } = require('../actions/generate-idapi-banners/html5')
 
 const AUTHOR = 'https://author-p1-e2.adobeaemcloud.com'
-const cfg = daConfig({})
+const cfg = daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' })
 const PAGEMAP = 'pagenumber,pagename,html5,motion\n1,MedRect_300x250,yes,headline:fadeUp\n2,Leader_728x90,no,\n'
 const CSV = 'outputFileName,headline,hero,clickthrough\nSpring,Hi,hero.jpg,https://example.com\n'
 const MANIFEST = {
@@ -115,16 +115,27 @@ test('publishHtml5 without any DA token writes nothing and says why', async () =
   expect(calls.filter((x) => /admin\.da\.live|admin\.hlx\.page/.test(x.url))).toEqual([])
 })
 
-test('edsPreview retries a sign-in-required site with the user bearer, not when an admin key is set', async () => {
+test('edsPreview sends the user token for the DA content read, and retries a sign-in-required site with it', async () => {
+  const src = { 'x-content-source-authorization': 'Bearer user-tok' }
   let calls = mockFetch([[/POST .*admin\.hlx\.page/, (url, opts) => (opts.headers.Authorization ? ok('') : status(401))]])
   await da.edsPreview(cfg, '', '/ads/a', 'user-tok')
-  expect(calls.map((x) => x.opts.headers)).toEqual([{}, { Authorization: 'Bearer user-tok' }])
+  expect(calls.map((x) => x.opts.headers)).toEqual([src, { Authorization: 'Bearer user-tok', ...src }])
+
+  calls = mockFetch([[/POST .*admin\.hlx\.page/, ok('')]])
+  await da.edsPreview(cfg, '', '/ads/a', 'user-tok')
+  expect(calls.map((x) => x.opts.headers)).toEqual([src])
 
   calls = mockFetch([[/POST .*admin\.hlx\.page/, status(401)]])
   await expect(da.edsPreview(cfg, 'key', '/ads/a', 'user-tok')).rejects.toMatchObject({ code: 'HTML5_DA_NO_ACCESS' })
-  expect(calls.map((x) => x.opts.headers)).toEqual([{ 'x-auth-token': 'key' }])
+  expect(calls.map((x) => x.opts.headers)).toEqual([{ 'x-auth-token': 'key', 'x-content-source-authorization': 'Bearer user-tok' }])
 
   calls = mockFetch([[/POST .*admin\.hlx\.page/, status(401)]])
   await expect(da.edsPreview(cfg, '', '/ads/a')).rejects.toMatchObject({ code: 'HTML5_DA_NO_ACCESS' })
   expect(calls).toHaveLength(1)
+})
+
+test('edsPreview says when EDS could not read the page from DA', async () => {
+  const headers = { get: (n) => ({ 'x-error-code': 'AEM_BACKEND_FETCH_FAILED', 'x-error': 'secret-free text' })[n] }
+  mockFetch([[/POST .*admin\.hlx\.page/, { ok: false, status: 401, headers }]])
+  await expect(da.edsPreview(cfg, '', '/ads/a', 'user-tok')).rejects.toMatchObject({ code: 'HTML5_DA_NO_ACCESS', message: expect.stringMatching(/could not read the page from DA/) })
 })

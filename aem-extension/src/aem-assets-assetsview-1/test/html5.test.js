@@ -115,12 +115,21 @@ test('variationsSheet resolves images but leaves clickthrough alone', () => {
   expect(h.sheetEdited(null, sheet)).toBe(false)
 })
 
-test('daConfig: defaults, override, validation; campaignPaths', () => {
-  const cfg = h.daConfig({ DA_SITE: 'Banner-Ads' }, { DA_ORG: 'teammate' })
-  expect(cfg).toMatchObject({ org: 'teammate', site: 'banner-ads', root: '/ads', ref: 'main', previewOrigin: 'https://main--banner-ads--teammate.aem.page' })
-  expect(h.daConfig({}).org).toBe('pnamadobe')
-  expect(() => h.daConfig({ DA_ORG: 'evil.com/x' })).toThrow(/invalid org/)
-  expect(() => h.daConfig({ DA_ADS_ROOT: '/../x' })).toThrow(/DA_ADS_ROOT/)
+test('the site comes only from html5.json; campaignPaths', () => {
+  const cfg = h.siteConfig('{"DA_ORG": "teammate", "DA_SITE": "Banner-Ads"}')
+  expect(cfg).toMatchObject({ org: 'teammate', site: 'banner-ads', root: '/ads', ref: 'main', repo: 'teammate/banner-ads', previewOrigin: 'https://main--banner-ads--teammate.aem.page' })
+  expect(h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","DA_ADS_ROOT":"/banners/","EDS_REF":"dev","GITHUB_REPO":"Owner/pkg.repo"}')).toMatchObject({ root: '/banners', ref: 'dev', repo: 'Owner/pkg.repo' })
+  // no deployment default: a missing, empty or incomplete html5.json is HTML5_NO_SITE
+  for (const text of [null, '', '  ', '{}', '{"DA_ORG":"a"}', '{"DA_SITE":"b"}']) {
+    expect(() => h.siteConfig(text)).toThrow(expect.objectContaining({ code: 'HTML5_NO_SITE', message: expect.stringMatching(/add html5.json to the campaign folder/) }))
+  }
+  expect(() => h.daConfig()).toThrow(/add html5.json/)
+  expect(() => h.siteConfig('{nope')).toThrow(/not valid JSON/)
+  expect(() => h.siteConfig('[1]')).toThrow(/must be a JSON object/)
+  expect(() => h.siteConfig('{"DA_ORG":"evil.com/x","DA_SITE":"b"}')).toThrow(/DA_ORG "evil.com\/x" is not a valid name/)
+  expect(() => h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","DA_ADS_ROOT":"/../x"}')).toThrow(/DA_ADS_ROOT/)
+  expect(() => h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","GITHUB_REPO":"x"}')).toThrow(/GITHUB_REPO/)
+  expect(() => h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","EDS_REF":"bad ref"}')).toThrow(expect.objectContaining({ code: 'HTML5_NO_SITE' }))
   const p = h.campaignPaths(cfg, 'Spring Sale 2026!')
   expect(p.pagePath('MedRect_300x250')).toBe('/ads/spring-sale-2026/medrect-300x250')
   expect(p.rowsPath).toBe('/ads/spring-sale-2026/variations.json')

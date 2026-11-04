@@ -116,6 +116,9 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
   );
 }
 
+// The setup guide in this app's repo: one-time steps for a user's own EDS site and html5.json.
+const HTML5_SETUP_URL = 'https://github.com/pnamadobe/idapi-banner-auto/blob/main/docs/HTML5-SETUP.md';
+
 // Errors first, then warnings; the start action's 422 and the preflight estimate share this shape.
 function FindingsPanel({ findings }) {
   const errors = findings.filter((f) => f.severity === 'error');
@@ -373,9 +376,20 @@ export default function ModalIndesignBannersGeneration() {
             </View>
             <Text>
               <b>Generate HTML5 banners</b> publishes only the pagemap's HTML5 sizes as Document Authoring pages
-              in <b>{(estimate && estimate.html5Site) || 'pnamadobe/banner-ads'}</b>{estimate && estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}, previewed
+              in {estimate && estimate.html5Site ? <><b>{estimate.html5Site}</b>{estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}</> : 'your EDS site'}, previewed
               on EDS (no flattened images; run <b>Generate banners</b> for those). Package them for CM360 afterwards.
             </Text>
+            {estimate && estimate.html5SiteError && (
+              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+                <Flex direction="column" gap="size-100">
+                  <Text><b>No EDS site for this folder.</b> {estimate.html5SiteError}</Text>
+                  {Array.isArray(estimate.html5Checked) && estimate.html5Checked.length > 0 && (
+                    <Text>Looked for html5.json in: {estimate.html5Checked.join(', ')}.</Text>
+                  )}
+                  <Text>First time? Follow the <a href={HTML5_SETUP_URL} target="_blank" rel="noopener noreferrer">HTML5 banner setup guide ↗</a> (you can point Claude at it), then reopen this dialog.</Text>
+                </Flex>
+              </View>
+            )}
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {error && <Text><b>{error}</b></Text>}
             {findings.length > 0 && <FindingsPanel findings={findings} />}
@@ -385,11 +399,12 @@ export default function ModalIndesignBannersGeneration() {
               </Checkbox>
             )}
             <ButtonGroup orientation="vertical" width="100%">
-              <Button variant="accent" width="100%" isDisabled={(hasErrors && !override) || (estimate && Array.isArray(estimate.html5Pages) && !estimate.html5Pages.length)} onPress={() => generate('html5')}>Generate HTML5 banners</Button>
+              <Button variant="accent" width="100%" isDisabled={(hasErrors && !override) || (estimate && Array.isArray(estimate.html5Pages) && !estimate.html5Pages.length) || !!(estimate && estimate.html5SiteError)} onPress={() => generate('html5')}>Generate HTML5 banners</Button>
               <Button variant="secondary" width="100%" onPress={() => { setError(''); setStatus('idle'); }}>Back</Button>
             </ButtonGroup>
           </Flex>
         )}
+
 
         {status === 'running' && (
           <Flex direction="column" alignItems="center" gap="size-200" margin="size-300">
@@ -404,8 +419,8 @@ export default function ModalIndesignBannersGeneration() {
             {html5Run ? (
               <Text>
                 Your HTML5 banners are being published as Document Authoring pages
-                in <b>{(result && result.html5Folder && result.html5Folder.site) || (estimate && estimate.html5Site) || 'pnamadobe/banner-ads'}</b> under
-                <b> {(result && result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || '/ads'}</b>, previewed on EDS, in a few minutes.
+                in <b>{(result && result.html5Folder && result.html5Folder.site) || (estimate && estimate.html5Site) || 'your EDS site'}</b>
+                {((result && result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path)) ? <> under <b>{(result && result.html5Folder && result.html5Folder.path) || estimate.html5Path}</b></> : ''}, previewed on EDS, in a few minutes.
                 Keep this dialog open to get the preview links and the <b>Package for CM360</b> button; if you close it, reopen <b>Generate Banners</b> on this template later to package.
               </Text>
             ) : (
@@ -468,7 +483,7 @@ export default function ModalIndesignBannersGeneration() {
                 ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
                 : 'The generation completed successfully.'}
               {result.writeHtml5
-                ? <>{' '}Pages are in Document Authoring under <b>{(result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || '/ads'}</b> (image slices in <b>{result.outputFolder}/html5</b>).</>
+                ? <>{' '}Pages are in Document Authoring under <b>{(result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || 'your EDS site'}</b> (image slices in <b>{result.outputFolder}/html5</b>).</>
                 : <>{' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.</>}
             </Text>
             {!result.writeHtml5 && result.outputUrl && (

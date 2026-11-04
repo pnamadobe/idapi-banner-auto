@@ -222,23 +222,50 @@ function sheetEdited (current, lastWritten) {
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 const SEG = /^[a-z0-9][a-z0-9-]{0,62}$/i
 
-// Settings: job-folder html5.json override, then action params. Validated so a bad value can't
-// steer requests elsewhere.
-function daConfig (params = {}, override = {}) {
-  const pick = (k, d) => String(override[k] || params[k] || d || '').trim()
+// The EDS / Document Authoring site an HTML5 run publishes to comes only from html5.json in the
+// campaign folder or the nearest folder above it. Each team publishes to its own site, so the deployment has no default site and
+// action params are not read. Values are validated so a bad one can't steer requests elsewhere.
+// Every problem throws HTML5_NO_SITE with a message the modal shows as is.
+const SITE_EXAMPLE = '{"DA_ORG": "<your DA org>", "DA_SITE": "<your EDS site>"}'
+const NO_SITE = `HTML5 banners publish to your own EDS site: add html5.json to the campaign folder (or a folder above it) with ${SITE_EXAMPLE}`
+function noSite (message) {
+  const e = new Error(message)
+  e.code = 'HTML5_NO_SITE'
+  return e
+}
+const shown = (v) => JSON.stringify(String(v).slice(0, 64))
+function daConfig (site = {}) {
+  const pick = (k, d) => String(site[k] || d || '').trim()
+  if (!pick('DA_ORG') || !pick('DA_SITE')) throw noSite(NO_SITE)
   const cfg = {
-    org: pick('DA_ORG', 'pnamadobe'),
-    site: pick('DA_SITE', 'banner-ads'),
+    org: pick('DA_ORG'),
+    site: pick('DA_SITE'),
     root: '/' + pick('DA_ADS_ROOT', '/ads').replace(/^\/+|\/+$/g, ''),
     ref: pick('EDS_REF', 'main')
   }
-  for (const k of ['org', 'site', 'ref']) if (!SEG.test(cfg[k])) throw new Error(`invalid ${k}: ${cfg[k]}`)
-  if (!/^(\/[a-z0-9][a-z0-9-]*)+$/i.test(cfg.root)) throw new Error(`invalid DA_ADS_ROOT: ${cfg.root}`)
+  for (const [k, name] of [['org', 'DA_ORG'], ['site', 'DA_SITE'], ['ref', 'EDS_REF']]) {
+    if (!SEG.test(cfg[k])) throw noSite(`html5.json: ${name} ${shown(cfg[k])} is not a valid name`)
+  }
+  if (!/^(\/[a-z0-9][a-z0-9-]*)+$/i.test(cfg.root)) throw noSite(`html5.json: DA_ADS_ROOT ${shown(cfg.root)} is not a valid path`)
   cfg.org = cfg.org.toLowerCase()
   cfg.site = cfg.site.toLowerCase()
   cfg.root = cfg.root.toLowerCase()
   cfg.previewOrigin = `https://${cfg.ref}--${cfg.site}--${cfg.org}.aem.page`
+  // The GitHub repo whose workflow packages the ads for CM360: the site's own repo unless named.
+  cfg.repo = pick('GITHUB_REPO', `${cfg.org}/${cfg.site}`)
+  if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(cfg.repo)) throw noSite(`html5.json: GITHUB_REPO ${shown(cfg.repo)} is not owner/repo`)
   return cfg
+}
+
+// The campaign folder's html5.json: `text` is its contents, or null when there is none; `foundAt` is
+// the folder it was found in when that is a folder above the campaign (for messages).
+function siteConfig (text, foundAt) {
+  if (text == null || !String(text).trim()) throw noSite(NO_SITE)
+  const where = foundAt ? `html5.json in ${foundAt}` : 'html5.json in the campaign folder'
+  let site
+  try { site = JSON.parse(String(text)) } catch (e) { throw noSite(`${where} is not valid JSON. Expected ${SITE_EXAMPLE}`) }
+  if (!site || typeof site !== 'object' || Array.isArray(site)) throw noSite(`${where} must be a JSON object: ${SITE_EXAMPLE}`)
+  return daConfig(site)
 }
 
 // Paths for a campaign: { pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
@@ -270,6 +297,7 @@ module.exports = {
   dropClickthroughColumns,
   sheetEdited,
   daConfig,
+  siteConfig,
   campaignPaths,
   slug
 }

@@ -15,7 +15,7 @@
 | Fidelity failures | flag the ad, never block: the job and every other ad carry on |
 | Fonts | out of scope for now: the starter repo's web fonts are used as they are, with no licensing check or raster fallback |
 | Customer setup | we ship a **starter repo** (block, DA app, packaging workflow) |
-| DA org and site | configurable (`DA_ORG`, `DA_SITE`, with a per-folder override); the demo uses **`pnamadobe`** (`da.live/#/pnamadobe/`) |
+| DA org and site | named per campaign folder in **`html5.json`** (`DA_ORG`, `DA_SITE`); there is no deployment default, so a folder without one can't run HTML5 |
 
 **Goal:** turn the INDD template that already drives "Generate Banners" into **animated HTML5 ads that are
 EDS pages**. Each ad can be previewed live on `aem.page`, its copy is edited in a DA sheet, and it is packaged
@@ -328,7 +328,8 @@ size update after preview.
 | `HTML5_NO_PAGES` | error | HTML5 requested, no `html5=yes` page |
 | `HTML5_MOTION_UNKNOWN` | error | unknown preset, or a role not labelled on that page |
 | `HTML5_TOO_LONG` | error | duration × loops > 30 s |
-| `HTML5_NO_EDS_SITE` | error | no EDS site configured for the job folder (§11) |
+| `HTML5_NO_SITE` | error | the campaign folder has no usable `html5.json` naming its DA org and site (§11.1) |
+| `HTML5_NO_EDS_SITE` | error | the named site has no EDS project behind it (§11) |
 | `HTML5_DA_NO_ACCESS` | error | the user cannot write to the resolved DA org and site (§11.1) |
 | `HTML5_ASSET_NOT_DELIVERABLE` | error | a swapped image is not approved for delivery |
 | `HTML5_NO_CLICKTHROUGH` | warn | no row has a click-through URL (no accepted column, §3.4, or all its cells empty) |
@@ -359,42 +360,49 @@ organisation:
 * `.github/workflows/package.yml` — packaging, plus a secret holding the writeback action's key;
 * EDS and DA config pointing at the customer's AEM, with their DA org and site.
 
-### 11.1 Which DA org and site (configurable)
+### 11.1 Which DA org and site (per campaign folder)
 
-This is a demo, so the DA org is **`pnamadobe`** (`https://da.live/#/pnamadobe/`), with the starter repo at
-`github.com/pnamadobe/banner-ads`. No org or site name is written in code. They are settings, so a teammate can
-point the same code at their own DA org without changing anything else.
+Each campaign folder names its own EDS / DA site in an **`html5.json`** file in the AEM folder, next to the
+template and the variations CSV. Nothing else decides it: there is no deployment default and no fallback to the
+demo site, so one user's HTML5 run can never write into another user's DA org or EDS site.
 
-| setting | demo value | meaning |
-|---|---|---|
-| `DA_ORG` | `pnamadobe` | DA org; also the GitHub owner of the starter repo |
-| `DA_SITE` | `banner-ads` | DA site; also the starter repo name |
-| `DA_ADS_ROOT` | `/ads` | where campaign folders go inside the site |
-| `EDS_REF` | `main` | branch used in preview URLs: `https://<ref>--<site>--<org>.aem.page/ads/…` |
-| `GITHUB_REPO` | *(empty → `<DA_ORG>/<DA_SITE>`)* | only set when the repo name differs from the DA org and site |
-| `GITHUB_DISPATCH_TOKEN` | *(secret)* | lets the worker start `package.yml` in that repo |
+```json
+{ "DA_ORG": "pnamadobe", "DA_SITE": "banner-ads" }
+```
 
-They follow the extension's existing pattern: set in `aem-extension/.env` and passed to the Runtime actions as
-inputs in `ext.config.yaml`, like `AEM_AUTHOR_URL` and `AEM_FONTS_PATH`. `.env.example` ships the demo values
-with a comment, so a fresh copy works against `pnamadobe` and a teammate edits three lines to use their own.
+| key | required | default | meaning |
+|---|---|---|---|
+| `DA_ORG` | yes | — | DA org; also the GitHub owner of the site's repo |
+| `DA_SITE` | yes | — | DA site; also the repo name |
+| `DA_ADS_ROOT` | no | `/ads` | where campaign folders go inside the site |
+| `EDS_REF` | no | `main` | branch used in preview URLs: `https://<ref>--<site>--<org>.aem.page/ads/…` |
+| `GITHUB_REPO` | no | `<DA_ORG>/<DA_SITE>` | only set when the repo name differs from the DA org and site |
 
-Lookup order for each job:
+Names are validated (no path tricks, `GITHUB_REPO` must be `owner/repo`). The file is read with the app's AEM
+credentials whenever the site is needed: preflight, job start, the worker's DA step and Package for CM360.
 
-1. **Job folder override:** folder metadata (or a small `html5.json` in the job folder) naming `org`, `site` and
-   `root`. Use it to send one campaign to another site without redeploying. It works like `<folder>/fonts`
-   overriding `AEM_FONTS_PATH`.
-2. **Action inputs** from `.env`.
-3. Nothing set: Generate still makes the JPGs, and preflight reports `HTML5_NO_EDS_SITE`.
+* **No `html5.json`** (or one that is empty, not JSON, or missing `DA_ORG` / `DA_SITE`): the modal shows "No EDS
+  site for this folder" with the reason, the folders it looked in and a link to the
+  [setup guide](HTML5-SETUP.md), and disables Generate HTML5; the start action refuses with 422 `HTML5_NO_SITE`
+  before anything renders. The other Generate modes are not affected. Setup itself is not done in the modal: the
+  guide is written so a user (or Claude pointed at this repo) can follow it end to end.
+* The modal shows the site and DA path it resolved under the HTML5 option, so nobody writes into the wrong site
+  by mistake.
 
-The modal shows the site it resolved (`pnamadobe/banner-ads`) next to the HTML5 option, so nobody writes into
-someone else's org by mistake. The DA writes use the user's own IMS token (spike S3), so writing into an org the
-user has no access to fails at preflight rather than halfway through the job.
+Identity:
 
-For a teammate:
+* DA writes and the EDS preview run **as the signed-in user** (their IMS token, passed to the worker in the
+  invocation only and never stored), so writing into a site the user has no access to fails with
+  `HTML5_DA_NO_ACCESS`. Who can write is controlled in DA's own permissions (`da.live/config#/<org>/`) and the
+  site's admin access config.
+* `DA_TOKEN` / `EDS_ADMIN_TOKEN` on the worker override the user's token. **Don't set them in a multi-user
+  deployment**: every user's writes would then go as the operator, into any site an html5.json names.
+* `GITHUB_DISPATCH_TOKEN` (deployment secret) starts `package.yml` in the folder's repo. Package for CM360 for
+  another site's repo needs a dispatch token that can reach that repo.
 
-1. Fork `pnamadobe/banner-ads` into their GitHub org, and create the matching DA site.
-2. Set `DA_ORG`, `DA_SITE` and `GITHUB_DISPATCH_TOKEN` in their `.env`, then `aio app deploy`.
-3. Add the writeback key as a secret in their fork.
+For a teammate, follow [HTML5-SETUP.md](HTML5-SETUP.md): repo from `banner-ads`, AEM Code Sync, DA site, write
+access, `html5.json` in the campaign folder (or a folder above it), and dispatch-token access to their repo for
+packaging. The packaging workflow needs no repo secret; the writeback token travels in the dispatch payload.
 
 ### 11.2 The modal
 
@@ -410,7 +418,8 @@ The modal's button stack becomes:
 
 * "Generate HTML5 banners" always renders the JPGs too: each zip needs its backup image, and the fidelity check
   compares against it.
-* The resolved site (`pnamadobe/banner-ads`) is shown under the button.
+* The site from the folder's `html5.json` is shown under the button; with no `html5.json` the button is disabled
+  and says why.
 * For Photoshop jobs, the button shows but is disabled, labelled "InDesign templates only for now", until §13
   lands.
 * The results screen after an HTML5 job shows the gallery and the **"Package for CM360"** button.
@@ -479,10 +488,10 @@ InDesign to packaged, reviewable HTML5 ads: **about 6–6.5 weeks**, including s
 
 ## 16. Open questions
 
-1. **Starter repo hosting beyond the demo:** the demo uses `pnamadobe/banner-ads` (§11.1). For customers, a public
+1. **Starter repo hosting beyond the demo:** the demo folders name `pnamadobe/banner-ads` in their `html5.json` (§11.1). For customers, a public
    Adobe template repo, or shared privately per customer?
 
-Settled: DA org and site are settings, with `pnamadobe` for the demo; packaging has its own button, separate
+Settled: the DA org and site come only from each campaign folder's `html5.json`, with no deployment default; packaging has its own button, separate
 from Publish; a failed fidelity check flags the ad and never blocks the job.
 
 ### Deferred

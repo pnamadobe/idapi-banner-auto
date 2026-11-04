@@ -6,9 +6,9 @@ const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
 const { errorResponse, stringParameters, checkMissingRequestInputs, getBearerToken } = require('../utils')
 const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = require('../job-utils')
-const { inspectInputs, resolveOutputFolder } = require('./engine')
+const { inspectInputs, resolveOutputFolder, aemContext, html5SiteFor } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
-const { daConfig, campaignPaths } = require('./html5')
+const { campaignPaths } = require('./html5')
 
 const ttl = 7 * 24 * 3600
 
@@ -34,17 +34,9 @@ async function main (params) {
     if (!params.AEM_SC_JSON && !params.AEM_DEV_TOKEN) return errorResponse(500, 'AEM_SC_JSON or AEM_DEV_TOKEN must be configured for durable jobs', logger)
     const template = String(params.template || '').trim()
     if (template && !isTemplateName(template)) return errorResponse(400, 'template must be the file name of an .indd or .psd in the folder', logger)
-    if (String(params.preflight || '') === '1') {
-      const estimate = await inspectInputs({ ...params, template })
-      // Where HTML5 pages would go, for the modal (a bad setting just leaves it out).
-      try {
-        const cfg = daConfig(params)
-        const tpl = estimate.template || template
-        estimate.html5Site = `${cfg.org}/${cfg.site}`
-        estimate.html5Path = campaignPaths(cfg, params.folder.split('/').pop(), tpl).base
-      } catch (e) { /* not configured */ }
-      return { statusCode: 200, body: estimate }
-    }
+    // The estimate also says where HTML5 pages would go (html5Site / html5Path, from the folder's
+    // html5.json) or why HTML5 can't run in this folder (html5SiteError).
+    if (String(params.preflight || '') === '1') return { statusCode: 200, body: await inspectInputs({ ...params, template }) }
     // Preflight gate: errors stop the start (HTTP 422) unless preflightOverride=1. Not run for a job that
     // is already queued or running (that request only reports it). An inspection that itself fails
     // (e.g. AEM unreachable) does not block; the worker reports such failures on the job.
@@ -66,14 +58,6 @@ async function main (params) {
       delete job.findings
       if (checked) job.findings = checked.findings.slice(0, MAX_STORED_FINDINGS)
     }
-    // Where an HTML5 job's DA pages go, so the modal can link the DA folder as soon as the job starts.
-    const html5Folder = (tpl) => {
-      try {
-        const cfg = daConfig(params)
-        const base = campaignPaths(cfg, params.folder.split('/').pop(), tpl).base
-        return { site: `${cfg.org}/${cfg.site}`, path: base, daUrl: `https://da.live/#/${cfg.org}/${cfg.site}${base}` }
-      } catch (e) { return undefined }
-    }
     const state = await stateLib.init()
     const { editable: writeIndd, images: writeImages, html5: writeHtml5 } = outputMode(params)
     if (writeHtml5 && /\.psd$/i.test(template)) return errorResponse(400, 'HTML5 banners need an InDesign template for now', logger)
@@ -82,7 +66,34 @@ async function main (params) {
     // stored on the job, in state or in AEM. DA_TOKEN, when configured on the worker, overrides it.
     const daUserToken = writeHtml5 ? getBearerToken(params) : undefined
     if (writeHtml5 && !daUserToken) return errorResponse(401, 'HTML5 banners are written to Document Authoring as you: sign in again and retry', logger)
+    // Each campaign folder names its own EDS / DA site in html5.json: there is no shared default, so
+    // an HTML5 run in a folder without one is refused before anything renders.
+    let site = null
+    if (writeHtml5) {
+      try {
+        const { author, aemToken } = await aemContext(params)
+        site = await html5SiteFor(author, aemToken, params.folder)
+      } catch (e) {
+        if (e.code === 'HTML5_NO_SITE') return errorResponse(422, e.message, logger)
+        logger.warn(`html5.json could not be read: ${e.message}`) // the worker reports it on the job
+      }
+    }
+    // Where an HTML5 job's DA pages go, so the modal can link the DA folder as soon as the job starts.
+    const html5Folder = (tpl) => {
+      if (!site) return undefined
+      const base = campaignPaths(site, params.folder.split('/').pop(), tpl).base
+      return { site: `${site.org}/${site.site}`, path: base, daUrl: `https://da.live/#/${site.org}/${site.site}${base}` }
+    }
     const queue = (jobId) => invoke('generate-idapi-banners-worker', { jobId, ...(daUserToken ? { daUserToken } : {}) })
+    // Re-queue an existing job with a fresh queue time. A stale queuedAt (left by an earlier run) makes
+    // the status poller treat the job as stuck on its first poll and wake a second worker, which has no
+    // user token and could take the job before the invocation queued here.
+    const requeue = (job) => {
+      job.status = 'queued'
+      job.queuedAt = job.retriedAt = new Date().toISOString()
+      delete job.recoveryAt
+      delete job.recoveryError
+    }
     const stateKey = keyFor(params.folder, writeIndd, template, writeIndd && !writeImages, writeHtml5)
     const existing = await state.get(stateKey)
     if (existing) {
@@ -100,29 +111,26 @@ async function main (params) {
       if (writeHtml5) job.html5Folder = html5Folder((checked && checked.template) || job.template)
       if (stale) {
         if (forced) await state.delete(`${stateKey}-lock`)
-        job.status = 'queued'
-        job.retriedAt = new Date().toISOString()
+        requeue(job)
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }
       }
       if (job.status === 'completed') {
-        job.status = 'queued'
+        requeue(job)
         job.rowOffset = 0
         job.outputs = []
         delete job.html5
         job.outputFolder = await resolveOutputFolder({ ...params, aemAuthorUrl: job.aemAuthorUrl || params.aemAuthorUrl })
         delete job.error
-        job.retriedAt = new Date().toISOString()
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }
       }
       if (job.status === 'failed') {
-        job.status = 'queued'
+        requeue(job)
         delete job.error
         delete job.html5
-        job.retriedAt = new Date().toISOString()
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }

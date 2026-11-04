@@ -192,6 +192,36 @@ async function aemContext (params) {
   if (!/^https:\/\//i.test(author)) throw new Error('AEM_AUTHOR_URL must be an https URL')
   return { author, aemToken }
 }
+// The folders whose html5.json can name a campaign folder's EDS / DA site: the folder itself, then each
+// folder above it up to (not including) /content/dam. The nearest html5.json wins, so one file in a
+// brand folder serves every campaign under it and a campaign can still override it.
+function html5JsonFolders (folder) {
+  const parts = String(folder || '').replace(/\/+$/, '').split('/')
+  if (parts.length < 4 || parts[1] !== 'content' || parts[2] !== 'dam') return []
+  const out = []
+  for (let i = parts.length; i > 3; i--) out.push(parts.slice(0, i).join('/'))
+  return out
+}
+// Finds the nearest html5.json: { text, foundAt, checked } (text and foundAt null when there is none).
+// A read failure other than 404 (AEM unreachable, no access) is rethrown as is.
+async function html5SiteLookup (author, aemToken, folder) {
+  const checked = []
+  for (const f of html5JsonFolders(folder)) {
+    checked.push(f)
+    try {
+      return { text: (await aemDownload(author, aemToken, `${f}/html5.json`)).toString('utf8'), foundAt: f, checked }
+    } catch (e) {
+      if (!/-> 404$/.test(e.message)) throw e
+    }
+  }
+  return { text: null, foundAt: null, checked }
+}
+// The EDS / DA site of a campaign folder, from the nearest html5.json (html5.siteConfig throws
+// HTML5_NO_SITE when there is none or it is invalid).
+async function html5SiteFor (author, aemToken, folder) {
+  const { text, foundAt } = await html5SiteLookup(author, aemToken, folder)
+  return html5.siteConfig(text, foundAt && foundAt !== folder ? foundAt : undefined)
+}
 // Images opened to check size and format: bounded so a big CSV can't stall the start action.
 const PROBE_MAX = 60
 const PROBE_CONCURRENCY = 4
@@ -252,11 +282,22 @@ async function inspectInputs (params) {
   const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
   const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
   // The sizes an HTML5 run would publish (InDesign only), for the modal's HTML5 page.
+  // Where they would go: the folder's own site from html5.json, or why HTML5 can't run here.
   let html5Pages = []
+  const site = {}
   if (!isPsd(c.template.name)) {
     try { html5Pages = html5.pagemapHtml5(pagemapText).filter((p) => p.html5).map((p) => p.pagename) } catch (e) { /* unreadable pagemap: preflight reports it */ }
+    try {
+      const found = await html5SiteLookup(author, aemToken, params.folder)
+      if (!found.foundAt) site.html5Checked = found.checked
+      const cfg = html5.siteConfig(found.text, found.foundAt && found.foundAt !== params.folder ? found.foundAt : undefined)
+      site.html5Site = `${cfg.org}/${cfg.site}`
+      site.html5Path = html5.campaignPaths(cfg, params.folder.split('/').pop(), c.template.name).base
+    } catch (e) {
+      site.html5SiteError = e.code === 'HTML5_NO_SITE' ? e.message : `html5.json could not be read: ${e.message}`
+    }
   }
-  return { variationRows, pageCount, html5Pages, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name, ...r }
+  return { variationRows, pageCount, html5Pages, ...site, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name, ...r }
 }
 const isPsd = (name) => /\.psd$/i.test(name || '')
 function destFor (kind, name) {
@@ -787,9 +828,7 @@ async function processBatch (params, job, state) {
     let html5Result
     if (wantHtml5) {
       try {
-        let override = {}
-        try { override = JSON.parse((await aemDownload(author, aemToken, `${folder}/html5.json`)).toString('utf8')) } catch (e) { /* no job-folder override */ }
-        const cfg = html5.daConfig(params, override)
+        const cfg = await html5SiteFor(author, aemToken, folder)
         const ids = new Map()
         const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
         html5Result = await publishHtml5({
@@ -906,6 +945,9 @@ exports.processBatch = processBatch
 exports.inspectInputs = inspectInputs
 exports.resolveOutputFolder = resolveOutputFolder
 exports.aemContext = aemContext
+exports.html5SiteFor = html5SiteFor
+exports.html5SiteLookup = html5SiteLookup
+exports.html5JsonFolders = html5JsonFolders
 exports.ensureFolder = ensureFolder
 exports.aemUpload = aemUpload
 exports.aemDownload = aemDownload

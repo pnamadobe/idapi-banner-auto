@@ -51,14 +51,26 @@ function daError (verb, path, status) {
 // token: an EDS admin API key (x-auth-token). Without one the preview is tried unauthenticated (open
 // sites allow it) and, if the site requires sign-in, again with the signed-in user's IMS token (bearer),
 // the same way da.live itself calls admin.hlx.page.
+// EDS reads the page back from content.da.live to preview it. For a DA org with permissions set, that
+// read needs the signed-in user's token in x-content-source-authorization (as DA's own Preview button
+// sends it); Authorization is only for an EDS site that itself requires sign-in.
 async function edsPreview (cfg, token, path, bearer) {
   const url = `${EDS_ADMIN}/preview/${cfg.org}/${cfg.site}/${cfg.ref}${enc(path)}`
-  let res = await fetch(url, { method: 'POST', headers: token ? { 'x-auth-token': token } : {} })
+  const source = bearer ? { 'x-content-source-authorization': `Bearer ${bearer}` } : {}
+  let res = await fetch(url, { method: 'POST', headers: { ...(token ? { 'x-auth-token': token } : {}), ...source } })
   if (!token && bearer && (res.status === 401 || res.status === 403)) {
-    res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${bearer}` } })
+    res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${bearer}`, ...source } })
   }
   if (res.status === 404) { const e = new Error(`EDS preview ${path} -> 404 (is AEM Code Sync installed and the DA site connected?)`); e.code = 'HTML5_NO_EDS_SITE'; throw e }
-  if (!res.ok) { const e = new Error(`EDS preview ${path} -> ${res.status}`); e.code = res.status === 401 || res.status === 403 ? 'HTML5_DA_NO_ACCESS' : 'HTML5_EDS_ERROR'; throw e }
+  if (!res.ok) {
+    const header = (name) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(name) || '' : '')
+    const why = header('x-error-code') === 'AEM_BACKEND_FETCH_FAILED'
+      ? ' (EDS could not read the page from DA: check that you can open it in da.live)'
+      : header('x-error') ? ` (${header('x-error').replace(/https?:\/\/\S+/g, '').trim().slice(0, 200)})` : ''
+    const e = new Error(`EDS preview ${path} -> ${res.status}${why}`)
+    e.code = res.status === 401 || res.status === 403 ? 'HTML5_DA_NO_ACCESS' : 'HTML5_EDS_ERROR'
+    throw e
+  }
 }
 
 // ---- AEM: delivery URLs and approval ----
