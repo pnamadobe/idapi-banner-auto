@@ -51,7 +51,7 @@ Why EDS:
 ## 2. Architecture
 
 ```
-Assets View "Generate Banners"  [x] HTML5 banners
+Assets View modal  "Generate HTML5 banners" button (under "Generate banners")
         │
         ▼
 Runtime worker (engine.js)
@@ -77,7 +77,8 @@ Runtime writeback action ─► DAM output/html5/  zip (thumbnail = backup) + GI
 
 The user sees three steps:
 
-1. **Generate.** InDesign renders the JPGs as today and also exports each HTML5 page as layers. The worker
+1. **Generate.** The modal's **"Generate HTML5 banners"** button, directly under "Generate banners", starts the
+   job. InDesign renders the JPGs as today and also exports each HTML5 page as layers. The worker
    puts the layers in the DAM, writes the sheet and one layout page per size into DA, and previews them.
 2. **Review.** A gallery of live banners, one per size × row, opens in the Assets View modal when the job
    finishes, and also as an app inside DA (§8). Marketers fix copy in the sheet and adjust motion in the page;
@@ -178,7 +179,8 @@ ID). The DAM keeps one asset of record, with rights metadata and relations.
 * **Swapped images** (`hero`, …) are referenced where they sit in the job folder. They must already be
   approved for delivery; if one isn't, preflight stops the job before rendering (`HTML5_ASSET_NOT_DELIVERABLE`).
 
-This needs **Dynamic Media with OpenAPI** on the customer's AEM program (spike S4).
+This needs **Dynamic Media with OpenAPI** on the customer's AEM program (enabled on the demo program; spike S4
+checks latency and parameters).
 
 ### 5.2 One layout page per size
 
@@ -249,8 +251,10 @@ For each size × row:
 1. Open `aem.page/…/<size>?v=<row>&export=cm360` in headless Chromium: the preview reviewers approved, so
    no publish is needed.
 2. **Zip:** serialise the decorated DOM to `index.html`, inline the CSS, keep only the keyframes used, download
-   each image and font file into the zip and rewrite its path. The request log
-   must show nothing but the zip's own files.
+   each image and font file into the zip and rewrite its path. Drop the EDS page scaffolding (`aem.js`,
+   `scripts.js`, header and footer) and the EDS Content-Security-Policy meta: its nonce-based `script-src` blocks
+   the `javascript:window.open(clickTag)` click-through, so in export mode on `aem.page` the click does nothing
+   until the zip is built. The request log must show nothing but the zip's own files.
 3. **Weight budget:** images are fetched from the delivery URLs with width, quality and format parameters,
    stepping down quality, then 2× → 1.5× → 1× size, until the zip fits `budgetKB`. The steps taken are recorded.
    Still over at the lowest step: preflight error.
@@ -376,7 +380,26 @@ For a teammate:
 2. Set `DA_ORG`, `DA_SITE` and `GITHUB_DISPATCH_TOKEN` in their `.env`, then `aio app deploy`.
 3. Add the writeback key as a secret in their fork.
 
-### 11.2 On the AEM side
+### 11.2 The modal
+
+The modal's button stack becomes:
+
+```
+[ Generate banners ]                         existing
+[ Generate HTML5 banners ]                   new: HTML5 ads + the JPG backups they need
+[ Generate banners + editable file ]         existing
+[ Editable INDDs only (no flattened images) ] existing
+[ Cancel ]
+```
+
+* "Generate HTML5 banners" always renders the JPGs too: each zip needs its backup image, and the fidelity check
+  compares against it.
+* The resolved site (`pnamadobe/banner-ads`) is shown under the button.
+* For Photoshop jobs, the button shows but is disabled, labelled "InDesign templates only for now", until §13
+  lands.
+* The results screen after an HTML5 job shows the gallery and the **"Package for CM360"** button.
+
+### 11.3 On the AEM side
 * **Dynamic Media with OpenAPI** enabled on the program.
 * The Runtime worker's inputs gain the GitHub dispatch token; DA writes use the job's IMS token (spike S3).
 
@@ -411,7 +434,7 @@ named text layers carry their type styles, and named smart-object layers become 
 | S2 | Is `animationSettings` readable on InDesign Server? | presets and delays read back |
 | S3 | From a Runtime action: write a DA page and sheet via the DA source API, preview via the EDS admin API, IMS auth for both | a layout page live on `aem.page` |
 | S4 | Dynamic Media OpenAPI on the program: delivery URLs for freshly approved slices, latency until deliverable, width/quality/format parameters, licensing | slices load in the preview within seconds of upload |
-| S5 | Packaging: a Playwright-built zip uploads cleanly to a CM360 sandbox; AEM keeps a direct-binary zip as one asset; which animated rendition Assets View plays (GIF vs WebP) | screenshots |
+| S5 | Packaging: a Playwright-built zip passes the published CM360 HTML5 rules and Google's HTML5 validator (no CM360 account for the demo); AEM keeps a direct-binary zip as one asset; which animated rendition Assets View plays (GIF vs WebP) | screenshots |
 | S6 | Live-text fidelity: exported InDesign type styles vs the browser, using the starter repo's fonts | RMSE within the warn threshold on the sample template |
 
 ## 15. Plan and effort (one engineer)
@@ -422,7 +445,7 @@ named text layers carry their type styles, and named smart-object layers become 
 | 1a | Starter repo: `ad` block, motion presets, `?v=` and `?export=` modes, tests | 1–1.5 weeks |
 | 1b | Capability `writeHtml5`; importer (DAM layers, DA sheet and pages, preview) | 1.5 weeks |
 | 1c | Packaging workflow (zip, budget, GIF, storyboard, fidelity) and writeback action | 1.5 weeks |
-| 1d | Modal option and gallery, DA gallery app, preflight codes, metadata/relations/renditions, e2e tests | 1 week |
+| 1d | Modal "Generate HTML5 banners" button and gallery, DA gallery app, preflight codes, metadata/relations/renditions, e2e tests | 1 week |
 | 2 | Photoshop layer export | 1–1.5 weeks |
 | 3 | CM360 Trafficking API push (optional) | 1.5–2 weeks |
 
