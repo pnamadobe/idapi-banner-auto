@@ -248,8 +248,10 @@
             try {
                 var pj = app.scriptArgs.get("parameters");
                 if (pj) {
-                    var m = pj.match(new RegExp('"' + name + '"\\s*:\\s*(true|false|"[^"]*"|\\d+)', "i"));
-                    if (m) { var v = String(m[1]).replace(/"/g, "").toLowerCase(); return (v === "1" || v === "true" || v === "yes"); }
+                    // The API may hand params over as an escaped JSON string (\"name\":\"1\"), so allow a
+                    // backslash before each quote.
+                    var m = pj.match(new RegExp('\\\\?"' + name + '\\\\?"\\s*:\\s*(true|false|\\\\?"[^"\\\\]*\\\\?"|\\d+)', "i"));
+                    if (m) { var v = String(m[1]).replace(/[\\"]/g, "").toLowerCase(); return (v === "1" || v === "true" || v === "yes"); }
                 }
             } catch (e) {}
             return false;
@@ -414,7 +416,17 @@
             try {
                 var t = tf.texts[0];
                 var fam = "", sty = "";
-                try { fam = String(t.appliedFont.fontFamily); sty = String(t.appliedFont.fontStyleName || t.fontStyle || ""); } catch (eF) { try { fam = String(t.appliedFont).split("\t")[0]; sty = String(t.fontStyle || ""); } catch (eF2) {} }
+                // Each read is separate: in the cloud a font that is not installed can throw on one
+                // property and not another, and String(Font) is "[object Font]", never a name.
+                var af = null; try { af = t.appliedFont; } catch (eA) {}
+                var okName = function (v) { v = String(v || ""); return /^\[object/.test(v) ? "" : v; };
+                try { fam = okName(af.fontFamily); } catch (eF) {}
+                if (!fam) try { fam = okName(String(af.name).split("\t")[0]); } catch (eF2) {}
+                if (!fam) try { fam = okName(String(af).split("\t")[0]); } catch (eF3) {}
+                if (!fam) try { fam = okName(String(t.appliedParagraphStyle.appliedFont).split("\t")[0]); } catch (eF4) {}
+                try { sty = okName(af.fontStyleName); } catch (eS) {}
+                if (!sty) try { sty = okName(String(af.name).split("\t")[1]); } catch (eS2) {}
+                if (!sty) try { sty = okName(t.fontStyle); } catch (eS3) {}
                 if (fam) parts.push('"font":' + jesc(fam));
                 if (/italic|oblique/i.test(sty)) { parts.push('"italic":true'); sty = U.trim(sty.replace(/italic|oblique/ig, "")); }
                 if (sty) parts.push('"weight":' + jesc(sty));
@@ -445,12 +457,25 @@
                 for (var hp = 0; hp < doc.pages.length; hp++) {
                     if (!pageHtml5[String(hp + 1)]) continue;
                     var page = doc.pages.item(hp), pname = pageNameOf(page, hp), pb = page.bounds;
-                    var items = page.pageItems.everyItem().getElements().reverse(); // back to front
+                    // page.pageItems is grouped by object type (groups, rectangles, polygons, text frames), not
+                    // stacking order. allPageItems is true z-order, front to back (group children included),
+                    // so keep top-level items and reverse to get back to front.
+                    var all = page.allPageItems, items = [];
+                    // Hidden items (eye off, or on a hidden or non-printing layer) are not part of this
+                    // size: they must not come back as live text or be counted as slice art.
+                    var shown = function (pi) { try { if (pi.visible === false) return false; var ly = pi.itemLayer; if (ly && (ly.visible === false || ly.printable === false)) return false; } catch (eVis) {} return true; };
+                    for (var ai = all.length - 1; ai >= 0; ai--) if (all[ai].parent && all[ai].parent.constructor.name == "Spread" && shown(all[ai])) items.push(all[ai]);
+                    var liveCols = null;
+                    if (csv.header && csv.header.length) { liveCols = {}; for (var lc = 0; lc < csv.header.length; lc++) liveCols[U.trim(csv.header[lc]).toLowerCase()] = true; }
                     var units = [], run = null;
                     for (var u = 0; u < items.length; u++) {
                         var it = items[u], lb = itemLabel(it);
+                        // Only labels that name a CSV column are live; other labelled art (backgrounds,
+                        // logos, decorations) is baked into the static slices like unlabelled items.
+                        var demoted = !!(lb && liveCols && !liveCols[lb.toLowerCase()]);
+                        if (demoted) lb = "";
                         if (lb) { units.push({ label: lb, item: it, z: u }); run = null; continue; }
-                        if (hasInnerLabel(it)) warn.push(pname + ": HTML5 labelled item inside a group is baked into a static slice");
+                        if (!demoted && hasInnerLabel(it)) warn.push(pname + ": HTML5 labelled item inside a group is baked into a static slice");
                         if (!run) { run = { items: [], z: u }; units.push(run); }
                         run.items.push(it);
                     }
@@ -464,6 +489,9 @@
                             var tgt = resolveImageTarget(un.item), isText = false;
                             try { isText = un.item.constructor.name === "TextFrame"; } catch (eC) {}
                             var fb = (isText ? un.item : tgt.frame).geometricBounds, ej = '{"label":' + jesc(un.label) + ',"z":' + un.z + ',"box":' + boxJson(fb, pb);
+                            // geometricBounds of a rotated frame is its axis-aligned bounding box; the
+                            // angle (InDesign: degrees, counter-clockwise) lets the consumer unrotate it.
+                            try { var ra = (isText ? un.item : tgt.frame).rotationAngle; if (typeof ra === "number" && Math.abs(ra) >= 0.05) ej += ',"rot":' + Math.round(ra * 100) / 100; } catch (eRot) {}
                             if (isText) ej += ',"kind":"text","style":' + textStyleJson(un.item, un.label);
                             else {
                                 ej += ',"kind":"image"';
@@ -485,7 +513,7 @@
                         }
                         // master items belong to the back-most slice only
                         if (sliceIdx > 0 && master === null) { try { master = page.appliedMaster; page.appliedMaster = NothingEnum.NOTHING; } catch (eM) { master = false; } }
-                        var sname = "static-" + sliceIdx, srel = relDir + "/" + sname + ".png";
+                        var sname = "static-" + sliceIdx, srel = relDir + "/" + pname + "--" + sname + ".png"; // unique across sizes: the render returns outputs by bare name
                         try {
                             app.pngExportPreferences.pageString = page.name;
                             doc.exportFile(ExportFormat.PNG_FORMAT, new File(U.root + "/" + srel));
@@ -503,7 +531,15 @@
                 app.pngExportPreferences.exportResolution = savedR;
             }
         }
-        if (paramFlag("writeHtml5")) writeHtml5();
+        // HTML5 diagnostics for the run log: was it asked for, which pages the pagemap opted in, what came out.
+        var h5Asked = paramFlag("writeHtml5"), h5Gated = 0;
+        for (var hk in pageHtml5) { if (pageHtml5.hasOwnProperty(hk)) h5Gated++; }
+        if (h5Asked) writeHtml5();
+        var paramKeys = [];
+        try { var pjk = String(app.scriptArgs.get("parameters") || ""), km, kre = /\\?"([A-Za-z0-9_]+)\\?"\s*:/g; while ((km = kre.exec(pjk)) !== null) { if (paramKeys.length < 40) paramKeys.push(km[1]); } } catch (eK) {}
+        var h5Diag = "script build: html5-diag-5\nhtml5 requested: " + h5Asked + "\nhtml5 pages in pagemap: " + h5Gated +
+                     "\ntemplate pages: " + doc.pages.length + "\nhtml5 pages exported: " + html5Json.length +
+                     "\nparameter keys: " + (paramKeys.length ? paramKeys.join(", ") : "(none)") + "\n";
 
         for (var r = 0; r < csv.rows.length; r++) {
             var row = csv.rows[r];
@@ -575,7 +611,7 @@
         lf.encoding = "UTF-8"; lf.open("w");
         var fontLines = [];
         for (var fj = 0; fj < fontReport.length; fj++) fontLines.push(fontReport[fj].name + " [" + fontReport[fj].label + "]");
-        lf.write("rows: " + csv.rows.length + "\nformat: " + fmt + "\npagemap: " + pmName +
+        lf.write(h5Diag + "rows: " + csv.rows.length + "\nformat: " + fmt + "\npagemap: " + pmName +
                  "\nlinks relinked at open: " + relinked + "\nimages written: " + written + "\nindd written: " + inddWritten + "\npdf written: " + pdfWritten +
                  "\n\nfonts (" + fontReport.length + "):\n" + (fontLines.length ? fontLines.join("\n") : "none") +
                  "\n\nrows: " + log.join(", ") +

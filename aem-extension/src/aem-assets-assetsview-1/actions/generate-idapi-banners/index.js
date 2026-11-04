@@ -9,6 +9,7 @@ const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = re
 const { inspectInputs, resolveOutputFolder, aemContext, html5SiteFor } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
 const { campaignPaths } = require('./html5')
+const { saveSite } = require('./site')
 
 const ttl = 7 * 24 * 3600
 
@@ -24,6 +25,13 @@ async function invoke (action, payload) {
   if (!response.ok) throw new Error(`queue ${action} -> ${response.status}`)
 }
 
+// The signed-in user's token: the Authorization header, else the userToken the dialog also sends in the
+// body (some host / gateway paths drop the header). Never logged (stringParameters hides it) or stored.
+function userBearer (params) {
+  const t = getBearerToken(params) || (typeof params.userToken === 'string' ? params.userToken.trim() : '')
+  return t || undefined
+}
+
 async function main (params) {
   const publicJob = (job) => ({ ...baseJob(job), outputUrl: outputUrl(job, params) })
   const logger = Core.Logger('main', { level: params.LOG_LEVEL || 'info' })
@@ -31,6 +39,16 @@ async function main (params) {
     logger.debug(stringParameters(params))
     const missing = checkMissingRequestInputs(params, ['folder'], [])
     if (missing) return errorResponse(400, missing, logger)
+    // The dialog's site picker: check the DA site as the signed-in user, then save it in html5.json.
+    if (String(params.saveSite || '') === '1') {
+      try {
+        const { author } = await aemContext(params)
+        const saved = await saveSite({ author, userToken: userBearer(params), folder: params.folder, target: params.target, org: params.org, site: params.site })
+        return { statusCode: 200, body: saved }
+      } catch (e) {
+        return errorResponse(e.status || 500, e.message, logger)
+      }
+    }
     if (!params.AEM_SC_JSON && !params.AEM_DEV_TOKEN) return errorResponse(500, 'AEM_SC_JSON or AEM_DEV_TOKEN must be configured for durable jobs', logger)
     const template = String(params.template || '').trim()
     if (template && !isTemplateName(template)) return errorResponse(400, 'template must be the file name of an .indd or .psd in the folder', logger)
@@ -64,7 +82,7 @@ async function main (params) {
     // HTML5 pages are written to Document Authoring as the signed-in user (DA does not accept the
     // render service's token). The token is handed to the worker in the invocation only: it is never
     // stored on the job, in state or in AEM. DA_TOKEN, when configured on the worker, overrides it.
-    const daUserToken = writeHtml5 ? getBearerToken(params) : undefined
+    const daUserToken = writeHtml5 ? userBearer(params) : undefined
     if (writeHtml5 && !daUserToken) return errorResponse(401, 'HTML5 banners are written to Document Authoring as you: sign in again and retry', logger)
     // Each campaign folder names its own EDS / DA site in html5.json: there is no shared default, so
     // an HTML5 run in a folder without one is refused before anything renders.
@@ -121,6 +139,7 @@ async function main (params) {
         job.rowOffset = 0
         job.outputs = []
         delete job.html5
+        await state.delete(`${stateKey}-delivery`)
         job.outputFolder = await resolveOutputFolder({ ...params, aemAuthorUrl: job.aemAuthorUrl || params.aemAuthorUrl })
         delete job.error
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
@@ -131,6 +150,7 @@ async function main (params) {
         requeue(job)
         delete job.error
         delete job.html5
+        await state.delete(`${stateKey}-delivery`)
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }

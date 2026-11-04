@@ -124,7 +124,11 @@ async function aemUpload (author, token, folderDamPath, name, buf, mime) {
     body: new URLSearchParams({ fileName: name, fileSize: String(buf.length) })
   })
   let ir = await initiate()
-  if (ir.status === 404) { await ensureFolder(author, token, folderDamPath); ir = await initiate() }
+  // a folder just created can take a moment to accept uploads, so retry the initiate briefly
+  if (ir.status === 404) {
+    await ensureFolder(author, token, folderDamPath)
+    for (const ms of [0, 1000, 2000, 4000, 8000]) { if (ms) await sleep(ms); ir = await initiate(); if (ir.status !== 404) break }
+  }
   if (!ir.ok) throw new Error(`initiateUpload ${name} -> ${ir.status}`)
   const f = (JSON.parse((await ir.text()).replace(/^\)\]\}'?/, '')).files || [])[0]
   if (!f || !f.uploadURIs || !f.uploadURIs.length) throw new Error(`initiateUpload ${name}: no upload URI`)
@@ -287,9 +291,12 @@ async function inspectInputs (params) {
   const site = {}
   if (!isPsd(c.template.name)) {
     try { html5Pages = html5.pagemapHtml5(pagemapText).filter((p) => p.html5).map((p) => p.pagename) } catch (e) { /* unreadable pagemap: preflight reports it */ }
+    // Folders the dialog's site picker can save html5.json in (campaign folder first).
+    site.html5Folders = html5JsonFolders(params.folder)
     try {
       const found = await html5SiteLookup(author, aemToken, params.folder)
       if (!found.foundAt) site.html5Checked = found.checked
+      site.html5FoundAt = found.foundAt
       const cfg = html5.siteConfig(found.text, found.foundAt && found.foundAt !== params.folder ? found.foundAt : undefined)
       site.html5Site = `${cfg.org}/${cfg.site}`
       site.html5Path = html5.campaignPaths(cfg, params.folder.split('/').pop(), c.template.name).base
@@ -385,7 +392,24 @@ async function indesignRender (p, tok, assets, renderParams) {
   const er = await fetch(p.INDESIGN_EXECUTE_URL, { method: 'POST', headers: { ...idH(p, tok), 'Content-Type': 'application/json' }, body: JSON.stringify({ assets, params: renderParams || {} }) })
   const et = await er.text()
   if (er.status !== 202) throw new Error(`execute ${er.status} ${et}`)
-  return (await indesignPoll(p, tok, JSON.parse(et).statusUrl)).outputs
+  const { outputs, status } = await indesignPoll(p, tok, JSON.parse(et).statusUrl)
+  // The script's dataURL file (result.json) comes back in the status response, not as an upload.
+  outputs.data = renderData(status)
+  outputs.statusKeys = Object.keys(status || {}) // names only, for diagnostics
+  return outputs
+}
+// The script's response data: the status's `data` (object or JSON string), else a per-output `data`.
+function renderData (s) {
+  const parse = (v) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) return Object.keys(v).length ? v : null
+    if (typeof v === 'string' && v.trim().startsWith('{')) { try { return JSON.parse(v) } catch (e) { return null } }
+    return null
+  }
+  if (!s || typeof s !== 'object') return null
+  let d = parse(s.data) || parse(s.result && s.result.data)
+  if (d) return d
+  for (const o of (s.outputs || [])) { d = parse(o && o.data); if (d) return d }
+  return null
 }
 // First string anywhere inside `v` (any depth) that carries a PREFLIGHT: payload.
 function findPreflightText (v, depth = 0) {
@@ -730,22 +754,27 @@ async function processBatch (params, job, state) {
     const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
     let gateFindings = []
     let html5Manifest = null
+    let renderDiag = `no result.json (status keys: ${(outputs.statusKeys || []).join(', ') || 'none'})`
     const html5Slices = new Map() // '<page>/static-N.png' -> rendered output URL
-    if (rj) {
+    if (rj || outputs.data) {
       try {
-        const resultJson = await (await fetch(rj.url)).json()
+        const resultJson = outputs.data || await (await fetch(rj.url)).json()
         linkMap = resultJson.links || {}
         gateFindings = sanitizeIndFindings(resultJson.preflight && resultJson.preflight.findings)
         html5Manifest = resultJson.html5 || null
-      } catch (e) { logger.warn(`result.json unreadable: ${e.message}`) }
+        renderDiag = `result.json keys: ${Object.keys(resultJson).join(', ') || 'none'}`
+      } catch (e) { logger.warn(`result.json unreadable: ${e.message}`); renderDiag = 'result.json unreadable' }
     }
+    // Names only (never the presigned URLs): what the render handed back, for HTML5 failures.
+    renderDiag += `; ${outputs.length} output(s): ${outputs.map((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]).slice(0, 8).join(', ')}`
+    logger.info(`render returned ${renderDiag}`)
     for (const f of gateFindings) logger.warn(`preflight ${f.severity} ${f.code}: ${f.message}`)
     for (const o of outputs) {
       const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
       if (name === 'result.json') continue
-      const slice = sliceOf(o.src)
+      const slice = sliceOf(o.src, o.url)
       if (slice) { html5Slices.set(`${slice.page}/${slice.file}`, o.url); continue } // published by step 5c
-      if (job && (job.outputs || []).includes(name)) continue
+      if (job && name !== '_run_log.txt' && (job.outputs || []).includes(name)) continue // the log is rewritten every run
       // Editable-only run: the rendered page images are not delivered. The first page's JPG is still kept in
       // memory as the .indd's AEM preview (see attachPreview below); every other image is skipped unfetched.
       if ((skipImages || html5Only) && /\.(jpe?g|png)$/i.test(name)) {
@@ -858,6 +887,10 @@ async function processBatch (params, job, state) {
           }
         })
         logger.info(`html5: ${html5Result.pages.length} page(s) previewed, ${html5Result.warnings.length} warning(s)`)
+        // No HTML5 section in the render's result: say what did come back, so the job error is actionable.
+        if (!html5Manifest || !Object.keys(html5Manifest).length) {
+          for (const w of html5Result.warnings) if (w.code === 'HTML5_NO_PAGES') w.message += ` [${renderDiag}]`
+        }
       } catch (e) {
         html5Result = { pages: [], warnings: [{ code: e.code || 'HTML5_DA_ERROR', message: e.message }] }
         logger.warn(`html5 publish failed: ${e.message}`)
@@ -956,3 +989,4 @@ exports.jobManifestName = jobManifestName
 exports.aemListSafe = aemListSafe
 exports.verifyAemAsset = verifyAemAsset
 exports.aemApiPath = aemApiPath
+exports.renderData = renderData

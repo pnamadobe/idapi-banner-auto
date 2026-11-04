@@ -172,3 +172,38 @@ test('dropClickthroughColumns: no click-through column, no change; a row left em
   expect(h.dropClickthroughColumns('Landing Page URL\nhttps://x\n')).toEqual({ text: '""\n""\n', dropped: ['Landing Page URL'] })
   expect(h.dropClickthroughColumns('outputFileName,Exit URL\nA,https://x').text).toBe('outputFileName\nA')
 })
+
+test('unrotateBox recovers a rotated frame from its bounding box', () => {
+  const t = 5.6 * Math.PI / 180
+  const W = 400 * Math.cos(t) + 600 * Math.sin(t)
+  const H = 400 * Math.sin(t) + 600 * Math.cos(t)
+  const out = h.unrotateBox({ x: 100, y: 50, w: W, h: H }, -5.6)
+  expect(out.w).toBeCloseTo(400, 6)
+  expect(out.h).toBeCloseTo(600, 6)
+  expect(out.x + out.w / 2).toBeCloseTo(100 + W / 2, 6)
+  expect(out.y + out.h / 2).toBeCloseTo(50 + H / 2, 6)
+  // no angle, or an angle too steep to invert: the box is kept
+  const box = { x: 0, y: 0, w: 10, h: 20 }
+  expect(h.unrotateBox(box, 0)).toBe(box)
+  expect(h.unrotateBox(box, 44)).toBe(box)
+})
+
+test('layersFromManifest turns an exported rotation into a rotate token and the unrotated box', () => {
+  const W = 400 * Math.cos(Math.PI / 36) + 300 * Math.sin(Math.PI / 36)
+  const H = 400 * Math.sin(Math.PI / 36) + 300 * Math.cos(Math.PI / 36)
+  const [hero, kicker] = h.layersFromManifest({
+    width: 800,
+    height: 600,
+    elements: [
+      { label: 'hero', z: 1, kind: 'image', rot: 5, box: { x: 10, y: 10, w: W, h: H }, crop: { fx: 50, fy: 40 } },
+      { label: 'kicker', z: 2, kind: 'text', rot: 0.01, box: { x: 0, y: 0, w: 100, h: 20 }, style: { size: 21 } }
+    ]
+  })
+  expect(hero.style).toBe('focus:50,40 rotate:-5')
+  const [x, y, w, hh] = hero.box.split(',').map(Number)
+  expect([w, hh]).toEqual([400, 300])
+  expect(x + w / 2).toBeCloseTo(10 + W / 2, 0)
+  expect(y + hh / 2).toBeCloseTo(10 + H / 2, 0)
+  expect(kicker.style).toBe('21')
+  expect(kicker.box).toBe('0,0,100,20')
+})

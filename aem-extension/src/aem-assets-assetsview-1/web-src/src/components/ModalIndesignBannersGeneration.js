@@ -6,7 +6,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { attach } from '@adobe/uix-guest';
 import {
-  Flex, Provider, defaultTheme, Text, Heading, ButtonGroup, Button, View, ProgressCircle, Checkbox
+  Flex, Provider, defaultTheme, Text, Heading, ButtonGroup, Button, View, ProgressCircle, Checkbox,
+  TextField, Picker, Item, ActionButton
 } from '@adobe/react-spectrum';
 
 import { extensionId } from './Constants';
@@ -81,7 +82,8 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
     call({}).then((b) => setPkg({ ...b, done: b.done || 0 })).catch((e) => setPkgError(String(e.message || e)));
   };
   const pages = (html5 && html5.pages) || [];
-  const warnings = (html5 && html5.warnings) || [];
+  const delivery = (html5 && html5.delivery) || null;
+  const warnings = [...((delivery && delivery.warnings) || []), ...((html5 && html5.warnings) || [])];
   const running = pkg && pkg.status === 'running';
   return (
     <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -94,6 +96,13 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
             {p.rows ? ` · ${p.rows} variation${p.rows === 1 ? '' : 's'}` : ''}
           </Text>
         ))}
+        {delivery && (delivery.status === 'pending' || delivery.status === 'running') && (
+          <Text>⏳ Backgrounds are being approved for Dynamic Media ({delivery.total} image{delivery.total === 1 ? '' : 's'}); AEM processes each upload first, so the pages update in a few minutes.</Text>
+        )}
+        {delivery && delivery.status === 'done' && (
+          <Text>✓ Backgrounds approved for Dynamic Media ({delivery.delivered}/{delivery.total}) and the pages previewed again.</Text>
+        )}
+        {delivery && delivery.status === 'failed' && <Text>✖ Backgrounds were not approved: {delivery.error}</Text>}
         {warnings.slice(0, 5).map((w, i) => <Text key={`w-${i}`}>⚠ {typeof w === 'string' ? w : (w.message || JSON.stringify(w))}</Text>)}
         {!url && <Text>The package action URL is not configured.</Text>}
         {pkg && pkg.status !== 'none' && (
@@ -141,6 +150,59 @@ function FindingsPanel({ findings }) {
   );
 }
 
+// Pick the existing DA / EDS site this folder publishes HTML5 banners to. The action checks the signed-in
+// user can write to it and that it serves the ad block, then saves html5.json in the chosen folder as them.
+// Creating a site (repo, Code Sync, DA) stays in the setup guide.
+function SitePicker({ estimate, folder, aemAuthorUrl, getToken, onSaved, onCancel }) {
+  const [org0, site0] = String((estimate && estimate.html5Site) || '/').split('/');
+  const folders = (estimate && Array.isArray(estimate.html5Folders) ? estimate.html5Folders : []);
+  const defaultTarget = (estimate && estimate.html5FoundAt) || folders[1] || folders[0] || folder;
+  const [org, setOrg] = useState(org0 || '');
+  const [site, setSite] = useState(site0 || '');
+  const [target, setTarget] = useState(defaultTarget);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const save = async () => {
+    setSaving(true);
+    setSaveError('');
+    try {
+      const url = resolveActionUrl();
+      const token = await getToken();
+      if (!token) throw new Error('Assets View did not share your sign-in with this dialog. Reload Assets View and try again.');
+      const res = await actionWebInvoke(url, { Authorization: `Bearer ${token}` }, { folder, aemAuthorUrl, saveSite: '1', org, site, target, userToken: token });
+      if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || `saving the site returned ${res.statusCode}`);
+      await onSaved();
+    } catch (e) {
+      setSaveError(String(e.message || e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const short = (f) => (f === folder ? `${f} (this folder)` : f);
+  return (
+    <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+      <Flex direction="column" gap="size-100">
+        <Text>Enter the DA org and site your HTML5 banners publish to (the names in <code>da.live/#/org/site</code>). It's checked as you and saved for the folder you pick; folders below it use it too.</Text>
+        <Flex gap="size-150" wrap>
+          <TextField label="DA org" value={org} onChange={setOrg} isDisabled={saving} autoFocus />
+          <TextField label="DA site" value={site} onChange={setSite} isDisabled={saving} />
+        </Flex>
+        {folders.length > 1 && (
+          <Picker label="Use it for" selectedKey={target} onSelectionChange={setTarget} isDisabled={saving} width="100%">
+            {folders.map((f) => <Item key={f}>{short(f)}</Item>)}
+          </Picker>
+        )}
+        {saveError && <Text><b>{saveError}</b></Text>}
+        <ButtonGroup>
+          <Button variant="accent" onPress={save} isDisabled={saving || !org.trim() || !site.trim()}>{saving ? 'Checking…' : 'Save site'}</Button>
+          {onCancel && <Button variant="secondary" onPress={onCancel} isDisabled={saving}>Cancel</Button>}
+        </ButtonGroup>
+        <Text>No site yet? Follow the <a href={HTML5_SETUP_URL} target="_blank" rel="noopener noreferrer">HTML5 banner setup guide ↗</a> (you can point Claude at it).</Text>
+      </Flex>
+    </View>
+  );
+}
+
 export default function ModalIndesignBannersGeneration() {
   const [guestConnection, setGuestConnection] = useState();
   const [colorScheme, setColorScheme] = useState('light');
@@ -157,6 +219,7 @@ export default function ModalIndesignBannersGeneration() {
   const notFoundPolls = useRef(0);
   const [confetti, setConfetti] = useState(false);
   const [html5Run, setHtml5Run] = useState(false);
+  const [editSite, setEditSite] = useState(false);
   const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): DA writes and the package action's folder check
 
   useEffect(() => {
@@ -185,6 +248,34 @@ export default function ModalIndesignBannersGeneration() {
   };
 
   useEffect(() => { inspect(); }, [folder, template, aemAuthorUrl]);
+
+  // On open, look up this template's HTML5 job (same id the start action uses). A finished run that
+  // published pages opens on its HTML5 panel, so it can be packaged without rendering again; a run
+  // still in progress resumes polling. Anything else (none yet, failed, no pages) leaves the start screen.
+  useEffect(() => {
+    const url = resolveActionUrl('generate-idapi-banners-status');
+    if (!folder || !template || !url || /\.psd$/i.test(template)) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const jobId = await deterministicJobId(folder, 'html5', template);
+        const res = await actionWebInvoke(url, {}, { jobId });
+        const body = res && res.body ? res.body : res;
+        if (cancelled || !body || !body.writeHtml5 || typeof body.status !== 'string') return;
+        const published = body.status === 'completed' && body.html5 && (body.html5.pages || []).length > 0;
+        const inProgress = body.status === 'queued' || body.status === 'running';
+        if (!published && !inProgress) return;
+        // only take over the start screen: never replace a run the user just started
+        setStatus((s) => {
+          if (s !== 'idle') return s;
+          setHtml5Run(true);
+          setResult(published ? { ...body, found: true } : body);
+          return published ? 'done' : 'started';
+        });
+      } catch (e) { /* no earlier run: stay on the start screen */ }
+    })();
+    return () => { cancelled = true; };
+  }, [folder, template]);
 
   // Key on the job id, not the result object: each poll replaces `result`, which would
   // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
@@ -241,6 +332,25 @@ export default function ModalIndesignBannersGeneration() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [status, jobId]);
 
+  // After an HTML5 job completes, a follow-up run approves the backgrounds for Dynamic Media and
+  // previews the pages again: keep polling (quietly) until it has finished.
+  const deliveryState = result && result.html5 && result.html5.delivery && result.html5.delivery.status;
+  const delivering = deliveryState === 'pending' || deliveryState === 'running';
+  useEffect(() => {
+    if (status !== 'done' || !jobId || !delivering) return undefined;
+    const url = resolveActionUrl('generate-idapi-banners-status');
+    if (!url) return undefined;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const res = await actionWebInvoke(url, {}, { jobId });
+        const body = res && res.body ? res.body : res;
+        if (!cancelled && body && body.status === 'completed') setResult(body);
+      } catch (e) { /* the next tick retries */ }
+    }, 20000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [status, jobId, delivering]);
+
   const close = () => guestConnection && guestConnection.host.modal.closeDialog();
 
   // mode: 'images' (flattened images only) | 'both' (images + editable file) | 'editable' (editable file only)
@@ -269,6 +379,7 @@ export default function ModalIndesignBannersGeneration() {
       }
       if (token !== imsToken) setImsToken(token);
       headers = { Authorization: `Bearer ${token}` };
+      params.userToken = token;
     }
     const call = actionWebInvoke(url, headers, params)
       .then((r) => ({ done: true, r }))
@@ -379,16 +490,24 @@ export default function ModalIndesignBannersGeneration() {
               in {estimate && estimate.html5Site ? <><b>{estimate.html5Site}</b>{estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}</> : 'your EDS site'}, previewed
               on EDS (no flattened images; run <b>Generate banners</b> for those). Package them for CM360 afterwards.
             </Text>
-            {estimate && estimate.html5SiteError && (
-              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
-                <Flex direction="column" gap="size-100">
-                  <Text><b>No EDS site for this folder.</b> {estimate.html5SiteError}</Text>
-                  {Array.isArray(estimate.html5Checked) && estimate.html5Checked.length > 0 && (
-                    <Text>Looked for html5.json in: {estimate.html5Checked.join(', ')}.</Text>
-                  )}
-                  <Text>First time? Follow the <a href={HTML5_SETUP_URL} target="_blank" rel="noopener noreferrer">HTML5 banner setup guide ↗</a> (you can point Claude at it), then reopen this dialog.</Text>
-                </Flex>
-              </View>
+            {estimate && !estimate.html5SiteError && estimate.html5Site && !editSite && (
+              <Text>
+                Publishing to <b>{estimate.html5Site}</b>{estimate.html5FoundAt ? <> (set on {estimate.html5FoundAt})</> : ''} ·{' '}
+                <ActionButton isQuiet onPress={() => setEditSite(true)}>change</ActionButton>
+              </Text>
+            )}
+            {estimate && estimate.html5SiteError && !editSite && estimate.html5FoundAt && (
+              <Text><b>The html5.json in {estimate.html5FoundAt} can't be used:</b> {estimate.html5SiteError}</Text>
+            )}
+            {estimate && (estimate.html5SiteError || editSite) && (
+              <>{!estimate.html5FoundAt && !editSite && <Text><b>No EDS site is set for this folder yet.</b></Text>}<SitePicker
+                estimate={estimate}
+                folder={folder}
+                aemAuthorUrl={aemAuthorUrl}
+                getToken={async () => { const t = (await userToken(guestConnection)) || imsToken; if (t && t !== imsToken) setImsToken(t); return t; }}
+                onSaved={async () => { await inspect(); setEditSite(false); }}
+                onCancel={editSite ? () => setEditSite(false) : null}
+              /></>
             )}
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {error && <Text><b>{error}</b></Text>}
@@ -399,7 +518,7 @@ export default function ModalIndesignBannersGeneration() {
               </Checkbox>
             )}
             <ButtonGroup orientation="vertical" width="100%">
-              <Button variant="accent" width="100%" isDisabled={(hasErrors && !override) || (estimate && Array.isArray(estimate.html5Pages) && !estimate.html5Pages.length) || !!(estimate && estimate.html5SiteError)} onPress={() => generate('html5')}>Generate HTML5 banners</Button>
+              <Button variant="accent" width="100%" isDisabled={(hasErrors && !override) || (estimate && Array.isArray(estimate.html5Pages) && !estimate.html5Pages.length) || !!(estimate && estimate.html5SiteError) || editSite} onPress={() => generate('html5')}>Generate HTML5 banners</Button>
               <Button variant="secondary" width="100%" onPress={() => { setError(''); setStatus('idle'); }}>Back</Button>
             </ButtonGroup>
           </Flex>
@@ -421,7 +540,7 @@ export default function ModalIndesignBannersGeneration() {
                 Your HTML5 banners are being published as Document Authoring pages
                 in <b>{(result && result.html5Folder && result.html5Folder.site) || (estimate && estimate.html5Site) || 'your EDS site'}</b>
                 {((result && result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path)) ? <> under <b>{(result && result.html5Folder && result.html5Folder.path) || estimate.html5Path}</b></> : ''}, previewed on EDS, in a few minutes.
-                Keep this dialog open to get the preview links and the <b>Package for CM360</b> button; if you close it, reopen <b>Generate Banners</b> on this template later to package.
+                Keep this dialog open to get the preview links and the <b>Package for CM360</b> button, or close it and reopen <b>Generate Banners</b> on this template later: it opens on the finished run, ready to package.
               </Text>
             ) : (
               <Text>
@@ -477,11 +596,13 @@ export default function ModalIndesignBannersGeneration() {
 
         {status === 'done' && result && (
           <Flex direction="column" gap="size-150">
-            <Heading level={3}>{result.reused ? '✓ Existing generation found' : result.writeHtml5 ? '✓ HTML5 banners generated' : `✓ ${result.count} banner(s) generated`}</Heading>
+            <Heading level={3}>{result.found ? '✓ Last HTML5 run for this template' : result.reused ? '✓ Existing generation found' : result.writeHtml5 ? '✓ HTML5 banners generated' : `✓ ${result.count} banner(s) generated`}</Heading>
             <Text>
-              {result.reused
-                ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
-                : 'The generation completed successfully.'}
+              {result.found
+                ? 'These pages are from the last HTML5 generation of this template. Package them below, or generate again to render fresh pages.'
+                : result.reused
+                  ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
+                  : 'The generation completed successfully.'}
               {result.writeHtml5
                 ? <>{' '}Pages are in Document Authoring under <b>{(result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || 'your EDS site'}</b> (image slices in <b>{result.outputFolder}/html5</b>).</>
                 : <>{' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.</>}
@@ -511,7 +632,10 @@ export default function ModalIndesignBannersGeneration() {
                 <Text>{result.outputs.slice(0, 20).join(', ')}{result.outputs.length > 20 ? ' …' : ''}</Text>
               </View>
             )}
-            <ButtonGroup><Button variant="accent" onPress={close}>Close</Button></ButtonGroup>
+            <ButtonGroup>
+              {result.found && <Button variant="secondary" onPress={() => { setResult(null); setError(''); setStatus('html5-confirm'); }}>Generate again</Button>}
+              <Button variant="accent" onPress={close}>Close</Button>
+            </ButtonGroup>
           </Flex>
         )}
 

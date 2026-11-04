@@ -4,6 +4,10 @@ const { aemContext, aemDownload, jobManifestName } = require('./generate-idapi-b
 const { errorResponse } = require('./utils')
 
 const staleQueueMs = 45 * 1000
+// A worker is killed at its 10-minute limit; a job still 'running' with no update for longer than the
+// start action's stale window has lost its worker. Report it as failed (the record is left alone) so
+// the dialog stops waiting, and the next Generate click restarts it.
+const staleRunMs = 16 * 60 * 1000
 
 async function wakeWorker (jobId) {
   const namespace = process.env.__OW_NAMESPACE
@@ -51,5 +55,24 @@ exports.main = async (params) => {
       }
     }
   }
-  return { statusCode: 200, body: { ...publicJob(job), outputUrl: outputUrl(job, params) } }
+  const body = { ...publicJob(job), outputUrl: outputUrl(job, params) }
+  if (job.status === 'running' && Date.now() - Date.parse(job.updatedAt || job.createdAt || '') > staleRunMs) {
+    body.status = 'failed'
+    body.stale = true
+    body.error = 'The worker stopped before the job finished (it ran past its time limit). Generate again to restart it.'
+  }
+  // HTML5 backgrounds are approved for Dynamic Media by a follow-up run, after the job completes.
+  if (job.writeHtml5 && body.html5) {
+    const d = await state.get(`idapi-job-${resolvedJobId}-delivery`)
+    if (d) {
+      const { slices, ...delivery } = JSON.parse(d.value)
+      if (slices) delivery.remaining = slices.length
+      if ((delivery.status === 'pending' || delivery.status === 'running') && Date.now() - Date.parse(delivery.updatedAt || '') > staleRunMs) {
+        delivery.status = 'failed'
+        delivery.error = 'The background approval run stopped before it finished. Generate again to restart it.'
+      }
+      body.html5 = { ...body.html5, delivery }
+    }
+  }
+  return { statusCode: 200, body }
 }

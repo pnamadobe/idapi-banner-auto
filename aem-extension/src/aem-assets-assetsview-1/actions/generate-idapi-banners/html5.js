@@ -96,7 +96,8 @@ function pagemapHtml5 (text) {
 
 const r1 = (n) => Math.round(Number(n) * 10) / 10
 const hex = (c) => (/^#?[0-9a-f]{3}([0-9a-f]{3})?$/i.test(String(c || '')) ? `#${String(c).replace(/^#/, '').toLowerCase()}` : null)
-const family = (f) => String(f || '').replace(/["\\{};<>]/g, '').trim()
+// An InDesign object stringified ("[object Font]") is not a family name: drop it.
+const family = (f) => { const v = String(f || '').replace(/["\\{};<>]/g, '').trim(); return /^\[object\b/i.test(v) ? '' : v }
 
 // Capability style -> block style tokens. Text: font, weight, size/lead, colour, align, case,
 // tracking, background, radius, valign. Image: focal point and fit.
@@ -126,6 +127,30 @@ function styleTokens (el) {
 
 const boxStr = (b) => [b.x, b.y, b.w, b.h].map((n) => Math.round(Number(n) || 0)).join(',')
 
+// InDesign angle (counter-clockwise degrees) -> CSS rotate (clockwise). Tiny angles are dropped.
+const cssRotation = (rot) => {
+  const n = Number(rot)
+  return Number.isFinite(n) && Math.abs(n) >= 0.05 ? -Math.round(n * 100) / 100 : 0
+}
+
+// The capability exports a rotated frame's axis-aligned bounding box. Recover the frame's own
+// width and height (same centre) so the block can draw it unrotated and then rotate it:
+// W = w·c + h·s, H = w·s + h·c with c = |cos θ|, s = |sin θ|. Past ~40° the inverse is
+// ill-conditioned, so the bounding box is kept.
+function unrotateBox (b, rot) {
+  const t = (Number(rot) || 0) * Math.PI / 180
+  const c = Math.abs(Math.cos(t))
+  const s = Math.abs(Math.sin(t))
+  const d = c * c - s * s
+  if (!b || !s || d < 0.17) return b
+  const W = Number(b.w) || 0
+  const H = Number(b.h) || 0
+  const w = (W * c - H * s) / d
+  const h = (H * c - W * s) / d
+  if (!(w > 0 && h > 0)) return b
+  return { x: Number(b.x) + (W - w) / 2, y: Number(b.y) + (H - h) / 2, w, h }
+}
+
 // Page manifest -> block layers back to front. Slices carry an image URL (sliceUrl(slice));
 // elements bind to the sheet column named by their label. Motion: authored cell on the existing
 // DA page wins, then the pagemap motion map, else empty (the block picks a default).
@@ -141,7 +166,9 @@ function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {}
     if (it.slice) {
       return { name, kind: 'image', source: sliceUrl ? sliceUrl(it) : it.file, image: true, box: boxStr(it.box || { x: 0, y: 0, w: page.width, h: page.height }), motion, style: '' }
     }
-    return { name, kind: it.kind === 'image' ? 'image' : 'text', source: `{${name}}`, box: boxStr(it.box), motion, style: styleTokens(it) }
+    const deg = cssRotation(it.rot)
+    const style = [styleTokens(it), deg ? `rotate:${deg}` : ''].filter(Boolean).join(' ')
+    return { name, kind: it.kind === 'image' ? 'image' : 'text', source: `{${name}}`, box: boxStr(deg ? unrotateBox(it.box, deg) : it.box), motion, style }
   })
 }
 
@@ -290,6 +317,7 @@ module.exports = {
   pagemapAllHtml5,
   styleTokens,
   layersFromManifest,
+  unrotateBox,
   daPageHtml,
   readDaPage,
   variationsSheet,

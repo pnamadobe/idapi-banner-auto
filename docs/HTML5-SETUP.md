@@ -3,9 +3,9 @@
 One-time setup so **Generate Banners → HTML5** in AEM Assets View can publish animated HTML5 ads for you.
 
 HTML5 banners are published to **your own** Edge Delivery Services (EDS) site, authored in Document Authoring
-(DA). There is no shared or default site. Each campaign folder in AEM points at a site through an `html5.json`
-file. If that file is missing, the Generate Banners dialog shows **"No EDS site for this folder"** and lists the
-folders it looked in.
+(DA). There is no shared or default site. Steps 1–4 create the site once. Step 5 is done in the Generate Banners dialog: when a
+campaign folder has no site yet, it asks for the DA org and site, checks you can write to it, and saves the choice
+on the folder (as an `html5.json` file).
 
 > **Using Claude or another coding agent?** Point it at this file and ask it to walk you through the setup. Every
 > step below says what to do, how to check it worked, and what common errors mean. Nothing here needs a token or
@@ -69,25 +69,35 @@ your Adobe ID needs write access.
 **Check:** in DA, create a test document under `/ads`, click **Preview**, and confirm
 `https://main--<repo>--<owner>.aem.page/ads/<doc>` opens. Delete the test document afterwards.
 
-## Step 5: Add `html5.json` to the campaign folder in AEM
+## Step 5: Pick the site in the Generate Banners dialog
 
-This file tells Generate Banners which site the campaign publishes to.
+1. In AEM Assets View, select the campaign folder and open **Generate Banners → HTML5**.
+2. The dialog says **"No EDS site is set for this folder yet."** Enter:
+   * **DA org**: `<owner>`
+   * **DA site**: `<repo>`
+   * **Use it for**: the campaign folder, or a folder above it. Pick a brand or client folder to cover every
+     campaign under it. A campaign folder can still get its own site later.
+3. Click **Save site**. The dialog checks, as you:
+   * that your Adobe ID can write to `<owner>/<repo>` in DA (step 4);
+   * that `https://main--<repo>--<owner>.aem.page/blocks/ad/ad.js` exists (steps 1 and 2);
+   * that you can add files to the chosen AEM folder.
 
-1. On your computer, create a file named exactly **`html5.json`**:
+   If all pass, it saves `html5.json` in that folder.
 
-   ```json
-   { "DA_ORG": "<owner>", "DA_SITE": "<repo>" }
-   ```
+**Check:** the dialog now shows "Publishing to **<owner>/<repo>** (set on …) · change". Use **change** to point
+the folder at another site.
 
-2. In AEM Assets View, upload it into the **campaign folder** (the folder you run Generate Banners on), **or
-   any folder above it**. The nearest `html5.json` wins, so one file in a brand or client folder covers every
-   campaign under it, and a campaign folder can override it with its own. The search stops at the folder below
-   `/content/dam`.
+### Advanced: write `html5.json` by hand
 
-   Example: `/content/dam/26H2/hilton-hgv/html5.json` covers
-   `/content/dam/26H2/hilton-hgv/automation` and every other campaign under `hilton-hgv`.
+The dialog saves a file named `html5.json` in the folder. You can also upload one yourself, for example to set
+optional keys:
 
-Optional keys:
+```json
+{ "DA_ORG": "<owner>", "DA_SITE": "<repo>", "DA_ADS_ROOT": "/ads" }
+```
+
+The nearest `html5.json` wins: the campaign folder's own, else the closest folder above it, stopping at the
+folder below `/content/dam`. Saving from the dialog keeps any optional keys already in the file.
 
 | key | default | when to set it |
 |---|---|---|
@@ -96,11 +106,8 @@ Optional keys:
 | `GITHUB_REPO` | `<DA_ORG>/<DA_SITE>` | the GitHub repo name differs from the DA org and site |
 
 Rules: the file must be a JSON object; `DA_ORG`, `DA_SITE` and `EDS_REF` may only contain letters, digits and `-`;
-`GITHUB_REPO` is `owner/repo`. Put **no tokens or secrets** in it. It is an ordinary DAM asset that anyone with folder access can
-read.
-
-**Check:** reopen **Generate Banners** on the campaign folder. Under the HTML5 option, the dialog now shows your
-site and DA path (for example "in **<owner>/<repo>** under **/ads/…**") instead of "No EDS site for this folder".
+`GITHUB_REPO` is `owner/repo`. Put **no tokens or secrets** in it. It is an ordinary DAM asset that anyone with
+folder access can read.
 
 ## Step 6: Packaging for CM360 (optional)
 
@@ -122,14 +129,18 @@ secret, so never commit it.
 
 | What you see | What it means | Fix |
 |---|---|---|
-| **No EDS site for this folder**, "add html5.json to the campaign folder" | No `html5.json` in the campaign folder or any folder above it (the dialog lists the folders it checked) | Step 5 |
-| "… is not valid JSON" / "must be a JSON object" | `html5.json` exists but is malformed | Fix the file and re-upload it. Use straight quotes `"`, and no trailing commas |
-| Generate HTML5 is disabled | Same as the two rows above. The other Generate modes still work | Step 5 |
+| **No EDS site is set for this folder yet** | No `html5.json` in the campaign folder or any folder above it | Step 5 |
+| "The html5.json in … can't be used", "… is not valid JSON" / "must be a JSON object" | A hand-made `html5.json` is malformed | Save the site again from the dialog, or fix the file. Use straight quotes `"`, and no trailing commas |
+| Generate HTML5 is disabled | No usable site yet. The other Generate modes still work | Step 5 |
+| Save site: "your Adobe ID can't open … in Document Authoring" / "can read … but not write" | You lack write access to the DA site | Step 4 |
+| Save site: "… was not found in Document Authoring" | The DA org or site name is wrong, or the DA site doesn't exist | Step 3 |
+| Save site: "… has no ad block (blocks/ad/ad.js)" | The repo isn't from `banner-ads`, or Code Sync isn't installed | Steps 1 and 2 |
+| Save site: "you can't add files to … in AEM" | You can't edit that AEM folder | Pick another folder under **Use it for**, or ask an AEM admin |
 | `HTML5_DA_NO_ACCESS`, DA returned 401/403 | Your Adobe ID cannot write to the DA site | Step 4.1 |
 | `HTML5_DA_NO_ACCESS`, "EDS could not read the page from DA" / preview 401 | The site needs sign-in for preview and you lack the author role, or Code Sync is not set up | Steps 4.2 and 2 |
 | Preview page is blank or the ad doesn't animate | The repo is missing the `ad` block, or `EDS_REF` points at a branch without it | Step 1. Check `blocks/ad/` is on the branch in `EDS_REF` |
 | Package for CM360: "GitHub dispatch <owner>/<repo> -> 403/404" or "GITHUB_DISPATCH_TOKEN is not configured" | The dispatch token cannot reach your repo, or `package.yml` is missing | Step 6 |
-| Pages were written to someone else's site | `html5.json` names the wrong org or site, or a folder above yours has one | The dialog shows the resolved site before you run. Add your own `html5.json` in the campaign folder to override |
+| Pages were written to someone else's site | A folder above yours set another site | The dialog shows the site before you run. Click **change** and save your site on the campaign folder |
 
 Still stuck? The design notes in [HTML5-DESIGN.md](HTML5-DESIGN.md) (§11) describe how the site is resolved and
 who the writes run as.

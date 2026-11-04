@@ -176,3 +176,16 @@ describe('a re-run is not taken by a worker without the user token', () => {
     expect(mockBatch).toHaveBeenCalledTimes(2)
   })
 })
+
+test('status reports a running job whose worker stopped updating as failed, without changing it', async () => {
+  const status = require('../actions/generate-idapi-banners-status').main
+  const jobId = 'a'.repeat(48)
+  const old = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+  const rec = JSON.stringify({ stateKey: `idapi-job-${jobId}`, jobId, folder: FOLDER, writeHtml5: true, status: 'running', updatedAt: old })
+  mockStore.set(`idapi-job-${jobId}`, rec)
+  const r = await status({ jobId })
+  expect(r.body).toMatchObject({ status: 'failed', stale: true, error: expect.stringMatching(/Generate again/) })
+  expect(mockStore.get(`idapi-job-${jobId}`)).toBe(rec)
+  mockStore.set(`idapi-job-${jobId}`, rec.replace(old, new Date().toISOString()))
+  expect((await status({ jobId })).body.status).toBe('running')
+})

@@ -382,12 +382,19 @@ Names are validated (no path tricks, `GITHUB_REPO` must be `owner/repo`). The fi
 credentials whenever the site is needed: preflight, job start, the worker's DA step and Package for CM360.
 
 * **No `html5.json`** (or one that is empty, not JSON, or missing `DA_ORG` / `DA_SITE`): the modal shows "No EDS
-  site for this folder" with the reason, the folders it looked in and a link to the
-  [setup guide](HTML5-SETUP.md), and disables Generate HTML5; the start action refuses with 422 `HTML5_NO_SITE`
-  before anything renders. The other Generate modes are not affected. Setup itself is not done in the modal: the
-  guide is written so a user (or Claude pointed at this repo) can follow it end to end.
-* The modal shows the site and DA path it resolved under the HTML5 option, so nobody writes into the wrong site
-  by mistake.
+  site is set for this folder yet" (or why the file found can't be used) and asks for the **DA org** and **DA
+  site**, plus which folder to save it on (the campaign folder or one above it; folders below inherit it). Generate
+  HTML5 stays disabled until a site is saved; the start action refuses with 422 `HTML5_NO_SITE` before anything
+  renders. The other Generate modes are not affected.
+* **Save site** (start action with `saveSite=1`, code in `site.js`) runs entirely as the signed-in user: it lists
+  the site in DA (`admin.da.live/list/<org>/<site>`; 401/403/404, or `x-da-actions` without `write`, refuse the
+  save), checks the site serves `blocks/ad/ad.js` on `main--<site>--<org>.aem.page` (a 404 refuses; sign-in or
+  network errors don't), then writes `html5.json` into the chosen folder with the user's AEM token, keeping any
+  other keys already in it. AEM folder permissions therefore decide who can set a folder's site.
+* Creating the site (repo, Code Sync, DA site, permissions) is not done in the modal: the
+  [setup guide](HTML5-SETUP.md) is written so a user (or Claude pointed at this repo) can follow it end to end.
+* Once set, the modal shows "Publishing to **org/site** (set on <folder>) · change", so nobody writes into the
+  wrong site by mistake; **change** reopens the picker.
 
 Identity:
 
@@ -401,7 +408,7 @@ Identity:
   another site's repo needs a dispatch token that can reach that repo.
 
 For a teammate, follow [HTML5-SETUP.md](HTML5-SETUP.md): repo from `banner-ads`, AEM Code Sync, DA site, write
-access, `html5.json` in the campaign folder (or a folder above it), and dispatch-token access to their repo for
+access, the site saved from the dialog (or `html5.json` uploaded by hand), and dispatch-token access to their repo for
 packaging. The packaging workflow needs no repo secret; the writeback token travels in the dispatch payload.
 
 ### 11.2 The modal
