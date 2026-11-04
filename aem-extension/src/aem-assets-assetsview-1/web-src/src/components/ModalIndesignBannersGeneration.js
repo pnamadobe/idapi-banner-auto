@@ -18,8 +18,8 @@ function readJob() {
   // primary: localStorage (shared across the extension's same-origin iframes)
   try {
     const j = JSON.parse(localStorage.getItem('idapi_job') || '{}');
-    if (j && (j.folder || j.assetPath !== undefined || j.token)) {
-      return { folder: j.folder || '', template: j.templateName || '', assetPath: j.assetPath || '', token: j.token || '', aemAuthorUrl: j.aemAuthorUrl || '' };
+    if (j && (j.folder || j.assetPath !== undefined)) {
+      return { folder: j.folder || '', template: j.templateName || '', assetPath: j.assetPath || '', aemAuthorUrl: j.aemAuthorUrl || '' };
     }
   } catch (e) { /* ignore */ }
   // fallback: hash query
@@ -43,6 +43,15 @@ async function deterministicJobId(folder, mode, template) {
 }
 
 const MAX_SHOWN_FINDINGS = 10;
+
+// The signed-in user's IMS token, asked of the Assets View host each time (it is never stored).
+// Assets View exposes it as host.auth.getIMSInfo(); sharedContext 'auth' is the AEM editors' way.
+async function userToken(gc) {
+  if (!gc) return '';
+  try { const info = await gc.host.auth.getIMSInfo(); if (info && info.accessToken) return info.accessToken; } catch (e) { /* older host */ }
+  try { const auth = gc.sharedContext.get('auth'); if (auth && auth.imsToken) return auth.imsToken; } catch (e) { /* not shared */ }
+  return '';
+}
 
 // DA folder of an HTML5 job: the job's own record, else where preflight says the pages would go.
 const html5FolderUrl = (r, estimate) => (r && r.html5Folder && r.html5Folder.daUrl)
@@ -135,7 +144,7 @@ export default function ModalIndesignBannersGeneration() {
   const [job] = useState(readJob);
   const { folder, template, aemAuthorUrl } = job;
   const editableKind = /\.psd$/i.test(template) ? 'PSD' : 'INDD';
-  const [status, setStatus] = useState('idle'); // idle | running | done | error
+  const [status, setStatus] = useState('idle'); // idle | html5-confirm | running | started | done | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [estimate, setEstimate] = useState(null);
@@ -145,13 +154,13 @@ export default function ModalIndesignBannersGeneration() {
   const notFoundPolls = useRef(0);
   const [confetti, setConfetti] = useState(false);
   const [html5Run, setHtml5Run] = useState(false);
-  const [imsToken, setImsToken] = useState(job.token || ''); // the user's own token: the package action checks their folder access
+  const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): DA writes and the package action's folder check
 
   useEffect(() => {
     (async () => {
       const gc = await attach({ id: extensionId });
       setGuestConnection(gc);
-      try { const auth = gc.sharedContext.get('auth'); if (auth && auth.imsToken) setImsToken(auth.imsToken); } catch (e) {}
+      setImsToken(await userToken(gc));
       try { const t = await gc.host.theme.getThemeInfo(); if (t && t.colorScheme) setColorScheme(t.colorScheme); } catch (e) {}
     })();
   }, []);
@@ -199,7 +208,7 @@ export default function ModalIndesignBannersGeneration() {
           setConfetti(true);
           setStatus('done');
         } else if (body.status === 'failed') {
-          setError(`Job ${body.jobId} failed: ${body.error || 'The worker reported a failure.'}`);
+          setError(body.error || 'The worker reported a failure.');
           setStatus('error');
         }
       } catch (e) {
@@ -214,7 +223,7 @@ export default function ModalIndesignBannersGeneration() {
             cancelled = true;
             setResult(null);
             setError('Generation was not started — preflight found problems. Review them below, fix the inputs, or choose to generate anyway.');
-            inspect().then(() => setStatus('idle'));
+            inspect().then(() => setStatus(html5Run ? 'html5-confirm' : 'idle'));
           }
           return;
         }
@@ -243,7 +252,19 @@ export default function ModalIndesignBannersGeneration() {
     if (mode === 'html5') params.writeHtml5 = '1';
     setHtml5Run(mode === 'html5');
     if (override && hasErrors) params.preflightOverride = '1';
-    const call = actionWebInvoke(url, {}, params)
+    // HTML5 pages are written to Document Authoring as the signed-in user, so send their IMS token.
+    let headers = {};
+    if (mode === 'html5') {
+      const token = (await userToken(guestConnection)) || imsToken;
+      if (!token) {
+        setError('Assets View did not share your sign-in with this dialog. Reload Assets View and try again.');
+        setStatus('html5-confirm');
+        return;
+      }
+      if (token !== imsToken) setImsToken(token);
+      headers = { Authorization: `Bearer ${token}` };
+    }
+    const call = actionWebInvoke(url, headers, params)
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
     const outcome = await Promise.race([
@@ -261,7 +282,7 @@ export default function ModalIndesignBannersGeneration() {
     if (res && res.error && Array.isArray(res.findings)) {
       setFindings(res.findings);
       setOverride(false);
-      setStatus('idle');
+      setStatus(mode === 'html5' ? 'html5-confirm' : 'idle');
       return;
     }
     if (res && (res.error || (res.statusCode && res.statusCode >= 400))) { setError(res.error || ('action returned ' + res.statusCode)); setStatus('error'); return; }
@@ -303,10 +324,6 @@ export default function ModalIndesignBannersGeneration() {
               Choose <b>Generate banners</b> for the flattened images only, <b>+ editable file</b> to also
               write a reopenable {editableKind} per variation (larger output), or <b>Editable files only</b> to
               skip the flattened images{/\.psd$/i.test(template) ? '' : ' (each INDD still gets its preview and a multi-page PDF)'}.
-              {editableKind === 'INDD' && (
-                <> <b>Generate HTML5 banners</b> publishes only the pagemap's HTML5 sizes as Document Authoring pages
-                  in <b>{(estimate && estimate.html5Site) || 'pnamadobe/banner-ads'}</b>{estimate && estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}, previewed on EDS (no flattened images; run <b>Generate banners</b> for those). Package them for CM360 afterwards.</>
-              )}
             </Text>
             {estimate && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -329,12 +346,44 @@ export default function ModalIndesignBannersGeneration() {
             )}
             <ButtonGroup orientation="vertical" width="100%">
               <Button variant="accent" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('images')}>Generate banners</Button>
-              <Button variant="primary" width="100%" isDisabled={(hasErrors && !override) || editableKind === 'PSD'} onPress={() => generate('html5')}>
+              <Button variant="primary" width="100%" isDisabled={editableKind === 'PSD'} onPress={() => { setError(''); setStatus('html5-confirm'); }}>
                 {editableKind === 'PSD' ? 'HTML5 banners (InDesign templates only for now)' : 'Generate HTML5 banners'}
               </Button>
               <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('both')}>Generate banners + editable file</Button>
               <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('editable')}>Editable {editableKind}s only (no flattened images)</Button>
               <Button variant="secondary" width="100%" onPress={close}>Cancel</Button>
+            </ButtonGroup>
+          </Flex>
+        )}
+
+        {folder && status === 'html5-confirm' && (
+          <Flex direction="column" gap="size-200">
+            <Heading level={3}>HTML5 banners</Heading>
+            <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+              <Flex direction="column" gap="size-50">
+                <Text><b>Template:</b> {template || '(auto-detect in folder)'}</Text>
+                <Text><b>Folder:</b> {folder}</Text>
+                {estimate && Array.isArray(estimate.html5Pages) && (
+                  <Text><b>HTML5 sizes:</b> {estimate.html5Pages.length ? estimate.html5Pages.join(', ') : 'none (no pagemap row has html5 = yes)'}</Text>
+                )}
+              </Flex>
+            </View>
+            <Text>
+              <b>Generate HTML5 banners</b> publishes only the pagemap's HTML5 sizes as Document Authoring pages
+              in <b>{(estimate && estimate.html5Site) || 'pnamadobe/banner-ads'}</b>{estimate && estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}, previewed
+              on EDS (no flattened images; run <b>Generate banners</b> for those). Package them for CM360 afterwards.
+            </Text>
+            {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
+            {error && <Text><b>{error}</b></Text>}
+            {findings.length > 0 && <FindingsPanel findings={findings} />}
+            {hasErrors && (
+              <Checkbox isSelected={override} onChange={setOverride}>
+                Generate anyway (the problems above will probably make some or all banners fail)
+              </Checkbox>
+            )}
+            <ButtonGroup orientation="vertical" width="100%">
+              <Button variant="accent" width="100%" isDisabled={(hasErrors && !override) || (estimate && Array.isArray(estimate.html5Pages) && !estimate.html5Pages.length)} onPress={() => generate('html5')}>Generate HTML5 banners</Button>
+              <Button variant="secondary" width="100%" onPress={() => { setError(''); setStatus('idle'); }}>Back</Button>
             </ButtonGroup>
           </Flex>
         )}
@@ -393,10 +442,16 @@ export default function ModalIndesignBannersGeneration() {
         {status === 'error' && (
           <Flex direction="column" gap="size-150">
             <Heading level={3}>Generation failed</Heading>
-            <Text>{error}</Text>
+            <View backgroundColor="gray-100" padding="size-150" borderRadius="regular"><Text>{error}</Text></View>
             {result && result.jobId && <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>}
-            <Text>Check the job manifest in <b>{(result && result.outputFolder) || `${folder}/output`}/_idapi-job.json</b>, then retry after correcting the reported issue.</Text>
-            <ButtonGroup><Button variant="accent" onPress={close}>Close</Button></ButtonGroup>
+            {/* Only a job that ran has a manifest; HTML5 runs report on the job itself. */}
+            {!html5Run && result && result.jobId && (
+              <Text>Check the job manifest in <b>{(result && result.outputFolder) || `${folder}/output`}/_idapi-job.json</b>, then retry after correcting the reported issue.</Text>
+            )}
+            <ButtonGroup>
+              <Button variant="primary" onPress={() => { setError(''); setStatus(html5Run ? 'html5-confirm' : 'idle'); }}>Back</Button>
+              <Button variant="secondary" onPress={close}>Close</Button>
+            </ButtonGroup>
           </Flex>
         )}
 
@@ -442,16 +497,6 @@ export default function ModalIndesignBannersGeneration() {
           </Flex>
         )}
 
-        {status === 'error' && (
-          <Flex direction="column" gap="size-150">
-            <Heading level={3}>Generation failed</Heading>
-            <View backgroundColor="gray-100" padding="size-150" borderRadius="regular"><Text>{error}</Text></View>
-            <ButtonGroup>
-              <Button variant="primary" onPress={() => setStatus('idle')}>Back</Button>
-              <Button variant="secondary" onPress={close}>Close</Button>
-            </ButtonGroup>
-          </Flex>
-        )}
       </View>
     </Provider>
   );

@@ -91,8 +91,8 @@ One row per variation. Columns:
 
 | Column | Meaning |
 |--------|---------|
-| `outputFileName` | The stem for this variation's files, e.g. `SANT-EN-01` |
-| `outputFileName` | Reserved stem for the output files, e.g. `SANT-EN-01` |
+| `outputFileName` | Reserved. The stem for this variation's files, e.g. `SANT-EN-01` |
+| Click-through URL | Reserved, HTML5 banners only. Where the ad goes when clicked; see [Click-through column](#click-through-column) for the accepted names |
 | Any image column | Image filename placed in the frame with the matching Script Label |
 | Any text column | Text for the frame with the matching Script Label; use `\n` for line breaks |
 
@@ -111,6 +111,54 @@ Notes:
 - **Localization & versions** are just more rows — swap the text values and reuse
   the same images, as the EN/ES/`-02` rows above show.
 - A column you omit keeps the template's default for that frame.
+
+### Click-through column
+
+HTML5 banners need a URL to open when the ad is clicked. Put it in a column with
+one of the names below. The column is never placed in the layout (it is not a
+Script Label), and the JPG/PNG and `.indd` outputs ignore it. In the Document
+Authoring sheet it is always named `clickthrough`, and in a CM360 export it
+becomes the ad's `clickTag`.
+
+**How names are matched:** case, spaces and punctuation are ignored, so
+`cta-url`, `CTA URL`, `cta_url`, `CTA.Url` and `ctaUrl` are all the same name.
+
+**Accepted names** (shown without spaces or punctuation):
+
+| Name | Also accepted with `url`, `link` or `href` after it |
+|------|------|
+| `clickthrough` | `clickthroughurl`, `clickthroughlink`, `clickthroughhref` |
+| `clickthru` | `clickthruurl`, `clickthrulink`, `clickthruhref` |
+| `clicktag` | `clicktagurl`, `clicktaglink`, `clicktaghref` |
+| `landingpage` | `landingpageurl`, `landingpagelink`, `landingpagehref` |
+| `click` + suffix only | `clickurl`, `clicklink`, `clickhref` |
+| `cta` + suffix only | `ctaurl`, `ctalink`, `ctahref` |
+| `landing` + suffix only | `landingurl`, `landinglink`, `landinghref` |
+| `destination` + suffix only | `destinationurl`, `destinationlink`, `destinationhref` |
+| `exit` + suffix only | `exiturl`, `exitlink`, `exithref` |
+
+Examples that work: `clickthrough`, `clickthru`, `Click-Through URL`, `clickTag`,
+`cta-link`, `cta-url`, `CTA_URL`, `CTA Link`, `Landing Page`, `destination_url`,
+`Exit URL`.
+
+**Not click-through columns** (they are ordinary text or image columns):
+`cta` on its own (that is the button's text), `CTA text`, `click`, `url`, `link`,
+`landing`, `destination`, or any other name not listed above. So a CSV can have
+both `cta` (button text, e.g. `Book now`) and `cta-link` (its URL).
+
+Other rules:
+- Use one click-through column. If a CSV has more than one, the first non-empty
+  value in the row (left to right) is used.
+- A row can leave it empty; that ad then falls back to the `clickthrough` set on
+  the ad page itself, if any.
+- If no row has a click-through URL, the HTML5 run warns
+  `HTML5_NO_CLICKTHROUGH`: the ads are still built but will not click through
+  when exported.
+
+```csv
+outputFileName,Hero Image,Headline,cta,cta-link
+FAIR-EN-01,aurora-borealis-sq.jpg,SAY YES\nTO ANYWHERE.,Book now,https://example.com/fairbanks
+```
 
 ## Step 3 — Write the pagemap CSV
 

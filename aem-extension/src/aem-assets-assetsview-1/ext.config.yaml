@@ -67,8 +67,10 @@ runtimeManifest:
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             AEM_FONTS_PATH: $AEM_FONTS_PATH
             PSD_HERO_FRAME_ASPECT: $PSD_HERO_FRAME_ASPECT
-            # HTML5 (DA pages + EDS preview). DA_TOKEN / EDS_ADMIN_TOKEN are optional; without
-            # them the FFS service token is used.
+            # HTML5 (DA pages + EDS preview). Pages are written as the signed-in user (the start
+            # action passes their IMS token through; it is never stored). Optional overrides:
+            # DA_TOKEN (a token DA accepts for this site), EDS_ADMIN_TOKEN (an EDS admin API key).
+            # The render service token is never used for DA.
             DA_ORG: $DA_ORG
             DA_SITE: $DA_SITE
             DA_ADS_ROOT: $DA_ADS_ROOT

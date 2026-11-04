@@ -4,7 +4,7 @@
  */
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
-const { errorResponse, stringParameters, checkMissingRequestInputs } = require('../utils')
+const { errorResponse, stringParameters, checkMissingRequestInputs, getBearerToken } = require('../utils')
 const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = require('../job-utils')
 const { inspectInputs, resolveOutputFolder } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
@@ -77,6 +77,12 @@ async function main (params) {
     const state = await stateLib.init()
     const { editable: writeIndd, images: writeImages, html5: writeHtml5 } = outputMode(params)
     if (writeHtml5 && /\.psd$/i.test(template)) return errorResponse(400, 'HTML5 banners need an InDesign template for now', logger)
+    // HTML5 pages are written to Document Authoring as the signed-in user (DA does not accept the
+    // render service's token). The token is handed to the worker in the invocation only: it is never
+    // stored on the job, in state or in AEM. DA_TOKEN, when configured on the worker, overrides it.
+    const daUserToken = writeHtml5 ? getBearerToken(params) : undefined
+    if (writeHtml5 && !daUserToken) return errorResponse(401, 'HTML5 banners are written to Document Authoring as you: sign in again and retry', logger)
+    const queue = (jobId) => invoke('generate-idapi-banners-worker', { jobId, ...(daUserToken ? { daUserToken } : {}) })
     const stateKey = keyFor(params.folder, writeIndd, template, writeIndd && !writeImages, writeHtml5)
     const existing = await state.get(stateKey)
     if (existing) {
@@ -97,7 +103,7 @@ async function main (params) {
         job.status = 'queued'
         job.retriedAt = new Date().toISOString()
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
-        await invoke('generate-idapi-banners-worker', { jobId: job.jobId })
+        await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }
       }
       if (job.status === 'completed') {
@@ -109,15 +115,16 @@ async function main (params) {
         delete job.error
         job.retriedAt = new Date().toISOString()
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
-        await invoke('generate-idapi-banners-worker', { jobId: job.jobId })
+        await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }
       }
       if (job.status === 'failed') {
         job.status = 'queued'
         delete job.error
+        delete job.html5
         job.retriedAt = new Date().toISOString()
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
-        await invoke('generate-idapi-banners-worker', { jobId: job.jobId })
+        await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }
       }
     }
@@ -145,7 +152,7 @@ async function main (params) {
     const winner = await state.get(stateKey)
     const persisted = JSON.parse(winner.value)
     if (persisted.status === 'queued') {
-      await invoke('generate-idapi-banners-worker', { jobId: persisted.jobId })
+      await queue(persisted.jobId)
     }
     return { statusCode: 202, body: publicJob(persisted) }
   } catch (error) {

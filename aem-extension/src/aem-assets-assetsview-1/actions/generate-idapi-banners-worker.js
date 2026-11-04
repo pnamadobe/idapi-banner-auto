@@ -44,6 +44,16 @@ async function main (params) {
     const rows = result.body && result.body.batchRows ? result.body.batchRows : 0
     // HTML5 pages are published by the first batch; keep them for the status action / modal gallery.
     if (result.body && result.body.html5) job.html5 = result.body.html5
+    // An HTML5 run that wrote no DA page has produced nothing the user asked for: fail it (with the
+    // reason) instead of reporting success. A retry starts over and publishes again.
+    if (job.writeHtml5 && job.rowOffset === 0 && !((job.html5 && job.html5.pages) || []).length) {
+      job.status = 'failed'
+      job.error = `No HTML5 pages were published: ${html5Reason(job.html5)}`
+      job.updatedAt = new Date().toISOString()
+      await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+      await saveManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: job.updatedAt })
+      return { statusCode: 200, body: job }
+    }
     job.rowOffset += rows
     if (rows < job.batchSize) {
       job.status = 'completed'
@@ -76,6 +86,14 @@ async function main (params) {
   }
 }
 
+// The warning that explains an empty HTML5 run: access / site problems first, then the first one.
+const BLOCKING = ['HTML5_DA_NO_ACCESS', 'HTML5_NO_EDS_SITE', 'HTML5_NO_PAGES', 'HTML5_DA_ERROR', 'HTML5_EDS_ERROR']
+function html5Reason (html5) {
+  const warnings = (html5 && html5.warnings) || []
+  const w = BLOCKING.map((code) => warnings.find((x) => x && x.code === code)).find(Boolean) || warnings[0]
+  return w ? `${w.message} (${w.code})` : 'the render returned no HTML5 result'
+}
+
 async function queueNext (job) {
   const namespace = process.env.__OW_NAMESPACE
   const host = process.env.__OW_API_HOST || `https://${namespace}.adobeioruntime.net`
@@ -87,3 +105,4 @@ async function queueNext (job) {
 }
 
 exports.main = main
+exports.html5Reason = html5Reason

@@ -251,7 +251,12 @@ async function inspectInputs (params) {
   const r = runPreflight({ csvText: variationsText, pagemapText, plan, known: [...known], probes })
   const variationRows = Math.max(0, csvRecords(variationsText).length - 1)
   const pageCount = Math.max(0, csvRecords(pagemapText).length - 1)
-  return { variationRows, pageCount, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name, ...r }
+  // The sizes an HTML5 run would publish (InDesign only), for the modal's HTML5 page.
+  let html5Pages = []
+  if (!isPsd(c.template.name)) {
+    try { html5Pages = html5.pagemapHtml5(pagemapText).filter((p) => p.html5).map((p) => p.pagename) } catch (e) { /* unreadable pagemap: preflight reports it */ }
+  }
+  return { variationRows, pageCount, html5Pages, template: c.template.name, variations: c.variations.name, pagemap: c.pagemap.name, ...r }
 }
 const isPsd = (name) => /\.psd$/i.test(name || '')
 function destFor (kind, name) {
@@ -779,8 +784,11 @@ async function processBatch (params, job, state) {
         const idOf = async (path) => { if (!ids.has(path)) ids.set(path, await assetId(author, aemToken, path)); return ids.get(path) }
         html5Result = await publishHtml5({
           cfg,
-          daToken: params.DA_TOKEN || idTok,
+          // DA and EDS calls are made as the signed-in user (daUserToken, passed through by the start
+          // action and never stored); DA_TOKEN / EDS_ADMIN_TOKEN override it when configured.
+          daToken: params.DA_TOKEN || params.daUserToken || '',
           edsToken: params.EDS_ADMIN_TOKEN || '',
+          edsBearer: params.daUserToken || '',
           author,
           aemToken,
           outFolder,

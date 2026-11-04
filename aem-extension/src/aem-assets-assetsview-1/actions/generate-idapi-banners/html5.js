@@ -13,7 +13,21 @@ const CANONICAL = Object.fromEntries(PRESETS.map((p) => [p.toLowerCase(), p]))
 const MAX_TOTAL = 30
 const MAX_LOOPS = 3
 const DEFAULTS = { duration: 6, loops: 1, budgetKB: 150 }
-const RESERVED = ['clickthrough']
+// The click-through column. Names are compared ignoring case, spaces and punctuation (- _ . etc.), so
+// `cta-url`, `CTA URL`, `cta_url` and `ctaUrl` are all `ctaurl`. Accepted: a STANDALONE name on its own
+// or followed by a SUFFIX, or a PREFIX followed by a SUFFIX (`cta` alone is the button text, not a URL).
+// The ad block reads `clickthrough`, so the DA sheet always uses that name.
+// Documented in examples/README.md (Step 2) and docs/HTML5-DESIGN.md §3.4: keep all three in step.
+const CLICKTHROUGH_STANDALONE = ['clickthrough', 'clickthru', 'clicktag', 'landingpage']
+const CLICKTHROUGH_PREFIX = ['click', 'cta', 'landing', 'destination', 'exit']
+const CLICKTHROUGH_SUFFIX = ['url', 'link', 'href']
+const CLICKTHROUGH_COLUMNS = new Set([
+  ...CLICKTHROUGH_STANDALONE,
+  ...[...CLICKTHROUGH_STANDALONE, ...CLICKTHROUGH_PREFIX].flatMap((base) => CLICKTHROUGH_SUFFIX.map((s) => base + s))
+])
+const squash = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '')
+const isClickthroughColumn = (k) => CLICKTHROUGH_COLUMNS.has(squash(k))
+const columnKey = (k) => (isClickthroughColumn(k) ? 'clickthrough' : k)
 
 const yes = (v) => /^(y|yes|true|1|x)$/i.test(String(v || '').trim())
 const num = (v, d) => {
@@ -171,7 +185,11 @@ function readDaPage (html) {
 function variationsSheet (csvText, resolveImage = (v) => v) {
   const data = rowsFromRecords(csvRecords(String(csvText || ''))).map((row) => {
     const out = {}
-    for (const [k, v] of Object.entries(row)) out[k] = RESERVED.includes(k.toLowerCase()) ? String(v).trim() : resolveImage(v, k)
+    for (const [k, v] of Object.entries(row)) {
+      const key = columnKey(k)
+      if (key !== 'clickthrough') out[key] = resolveImage(v, k)
+      else if (!out.clickthrough) out.clickthrough = String(v).trim()
+    }
     return out
   })
   return { ':type': 'sheet', total: data.length, limit: data.length, offset: 0, data }
@@ -231,6 +249,7 @@ module.exports = {
   daPageHtml,
   readDaPage,
   variationsSheet,
+  isClickthroughColumn,
   sheetEdited,
   daConfig,
   campaignPaths,

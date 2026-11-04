@@ -139,6 +139,17 @@ row is `{ outputFileName, <label>: value…, clickthrough }`. `clickthrough` is 
 Label: it becomes the zip's default `clickTag`. Image columns hold DAM file names as today and are resolved to
 delivery URLs on import.
 
+The CSV may spell the click-through column several ways; on import it is always renamed to `clickthrough`, which
+is the name the `ad` block reads. Names are compared ignoring case, spaces and punctuation, and match when they are:
+
+* `clickthrough`, `clickthru`, `clicktag` or `landingpage`, alone or followed by `url`, `link` or `href`; or
+* `click`, `cta`, `landing`, `destination` or `exit` followed by `url`, `link` or `href`.
+
+So `clickthru`, `Click-Through URL`, `clickTag`, `cta-url`, `CTA Link` and `destination_url` all match, while `cta`
+alone (the button text), `click`, `url` and `link` do not. When a row has more than one such column, the first
+non-empty one wins. The lists live in `html5.js` (`CLICKTHROUGH_*`); the user-facing list is in
+[`examples/README.md`](../examples/README.md#click-through-column). Keep the three in step.
+
 After the first import, **the sheet is the source of copy for the HTML5 ads**. Re-running Generate does not
 overwrite a sheet that marketers have edited (it reports the difference instead), so copy edits are never lost.
 
@@ -315,7 +326,7 @@ size update after preview.
 | `HTML5_NO_EDS_SITE` | error | no EDS site configured for the job folder (§11) |
 | `HTML5_DA_NO_ACCESS` | error | the user cannot write to the resolved DA org and site (§11.1) |
 | `HTML5_ASSET_NOT_DELIVERABLE` | error | a swapped image is not approved for delivery |
-| `HTML5_NO_CLICKTHROUGH` | warn | row without `clickthrough` |
+| `HTML5_NO_CLICKTHROUGH` | warn | no row has a click-through URL (no accepted column, §3.4, or all its cells empty) |
 | `HTML5_SHEET_EDITED` | warn | the DA sheet differs from the CSV; the sheet is kept |
 | `HTML5_OVER_BUDGET` | error, after packaging | over budget at the lowest step |
 | `HTML5_FIDELITY` | warn, after packaging | fidelity above the warn threshold; flags that ad only, never blocks the job |

@@ -78,6 +78,28 @@ test('readDaPage tolerates DA wrapping cells in <p>', () => {
   expect(h.readDaPage('<html></html>')).toEqual({})
 })
 
+test('variationsSheet names the click-through column clickthrough however the CSV spells it', () => {
+  const accepted = [
+    'clickthrough', 'clickthru', 'Clickthrough', 'Click-Through URL', 'click_thru', 'clickTag', 'Click URL', 'clickthru-link',
+    'cta-link', 'cta-url', 'CTA_URL', 'CTA Link', 'ctaUrl', 'cta.href', 'landing-page', 'Landing Page URL', 'destination_url', 'Exit URL'
+  ]
+  for (const col of accepted) {
+    expect(h.isClickthroughColumn(col)).toBe(true)
+    const sheet = h.variationsSheet(`outputFileName,${col}\nSpring, https://example.com/a.png \n`, () => 'resolved')
+    expect(sheet.data).toEqual([{ outputFileName: 'resolved', clickthrough: 'https://example.com/a.png' }])
+  }
+  // Not click-through columns: left as they are (`cta` is the button's text).
+  for (const col of ['cta', 'CTA text', 'cta-color', 'click', 'clickcount', 'url', 'link', 'landing', 'destination', 'heroUrl']) {
+    expect(h.isClickthroughColumn(col)).toBe(false)
+  }
+  const other = h.variationsSheet('click,clickcount,cta\na,b,c\n')
+  expect(other.data).toEqual([{ click: 'a', clickcount: 'b', cta: 'c' }])
+  // A CTA button text column next to its link: only the link is the click-through.
+  expect(h.variationsSheet('cta,cta-link\nBook now,https://c.example\n').data).toEqual([{ cta: 'Book now', clickthrough: 'https://c.example' }])
+  // Two spellings: the first non-empty one wins.
+  expect(h.variationsSheet('clickthrough,clickthru\n,https://b.example\n').data).toEqual([{ clickthrough: 'https://b.example' }])
+})
+
 test('variationsSheet resolves images but leaves clickthrough alone', () => {
   const csv = 'outputFileName,headline,hero,clickthrough\nSpring,"Hi, there",assets/hero.jpg,https://example.com/a?b=1\n'
   const sheet = h.variationsSheet(csv, (v, col) => (col === 'hero' ? `https://d.example/${v}` : v))

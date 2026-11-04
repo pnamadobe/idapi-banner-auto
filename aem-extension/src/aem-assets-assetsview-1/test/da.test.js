@@ -106,3 +106,25 @@ test('publishHtml5 with no html5 pages', async () => {
   const r = await da.publishHtml5(ctx({ pagemapText: 'pagenumber,pagename,html5\n1,A,no\n' }))
   expect(r.warnings.map((w) => w.code)).toEqual(['HTML5_NO_PAGES'])
 })
+
+test('publishHtml5 without any DA token writes nothing and says why', async () => {
+  const calls = mockFetch([])
+  const r = await da.publishHtml5(ctx({ daToken: '' }))
+  expect(r.warnings.map((w) => w.code)).toEqual(['HTML5_DA_NO_ACCESS'])
+  expect(r.pages).toEqual([])
+  expect(calls.filter((x) => /admin\.da\.live|admin\.hlx\.page/.test(x.url))).toEqual([])
+})
+
+test('edsPreview retries a sign-in-required site with the user bearer, not when an admin key is set', async () => {
+  let calls = mockFetch([[/POST .*admin\.hlx\.page/, (url, opts) => (opts.headers.Authorization ? ok('') : status(401))]])
+  await da.edsPreview(cfg, '', '/ads/a', 'user-tok')
+  expect(calls.map((x) => x.opts.headers)).toEqual([{}, { Authorization: 'Bearer user-tok' }])
+
+  calls = mockFetch([[/POST .*admin\.hlx\.page/, status(401)]])
+  await expect(da.edsPreview(cfg, 'key', '/ads/a', 'user-tok')).rejects.toMatchObject({ code: 'HTML5_DA_NO_ACCESS' })
+  expect(calls.map((x) => x.opts.headers)).toEqual([{ 'x-auth-token': 'key' }])
+
+  calls = mockFetch([[/POST .*admin\.hlx\.page/, status(401)]])
+  await expect(da.edsPreview(cfg, '', '/ads/a')).rejects.toMatchObject({ code: 'HTML5_DA_NO_ACCESS' })
+  expect(calls).toHaveLength(1)
+})
