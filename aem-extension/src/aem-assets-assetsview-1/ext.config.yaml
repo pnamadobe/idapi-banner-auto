@@ -36,6 +36,10 @@ runtimeManifest:
             # "Document Fonts/"). Optional per-job <folder>/fonts overrides it.
             AEM_FONTS_PATH: $AEM_FONTS_PATH
             ASSETS_VIEW_TENANT: $ASSETS_VIEW_TENANT
+            DA_ORG: $DA_ORG
+            DA_SITE: $DA_SITE
+            DA_ADS_ROOT: $DA_ADS_ROOT
+            EDS_REF: $EDS_REF
           limits:
             timeout: 600000      # 10 min — render + AEM write-back is long-running
             memorySize: 512
@@ -63,6 +67,14 @@ runtimeManifest:
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             AEM_FONTS_PATH: $AEM_FONTS_PATH
             PSD_HERO_FRAME_ASPECT: $PSD_HERO_FRAME_ASPECT
+            # HTML5 (DA pages + EDS preview). DA_TOKEN / EDS_ADMIN_TOKEN are optional; without
+            # them the FFS service token is used.
+            DA_ORG: $DA_ORG
+            DA_SITE: $DA_SITE
+            DA_ADS_ROOT: $DA_ADS_ROOT
+            EDS_REF: $EDS_REF
+            DA_TOKEN: $DA_TOKEN
+            EDS_ADMIN_TOKEN: $EDS_ADMIN_TOKEN
           limits:
             timeout: 600000
             memorySize: 2048   # PSD templates (~60 MB) + embedded-image outputs overflowed 512 MB

@@ -54,6 +54,17 @@ async function main (params) {
 
     const pkgKey = `idapi-pkg-${jobId}`
     const prev = await state.get(pkgKey)
+    // Read-only status (the modal polls this): never dispatches.
+    if (/^(1|true|yes)$/i.test(String(params.status || ''))) {
+      if (!prev) return { statusCode: 200, body: { jobId, status: 'none' } }
+      const p = JSON.parse(prev.value)
+      const results = p.results || {}
+      const failed = Object.values(results).filter((r) => r && r.ok === false).length
+      return {
+        statusCode: 200,
+        body: { jobId, status: p.status, ads: (p.ads || []).length, done: Object.keys(results).length, failed, error: p.error, output: `${p.outFolder}/html5/cm360`, updatedAt: p.updatedAt }
+      }
+    }
     if (prev) {
       const p = JSON.parse(prev.value)
       const force = /^(1|true|yes)$/i.test(String(params.force || ''))
@@ -74,6 +85,7 @@ async function main (params) {
       outputs: job.outputs || [],
       cfg,
       campaign: job.folder.split('/').pop(),
+      template: c.template ? c.template.name : job.template,
       pages: list(params.pages),
       rows: list(params.rows)
     })

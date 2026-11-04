@@ -103,4 +103,9 @@ test('daConfig: defaults, override, validation; campaignPaths', () => {
   expect(p.pagePath('MedRect_300x250')).toBe('/ads/spring-sale-2026/medrect-300x250')
   expect(p.rowsPath).toBe('/ads/spring-sale-2026/variations.json')
   expect(p.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/ads/spring-sale-2026/medrect-300x250?v=Spring%20A')
+
+  // a sub-folder per template (the .indd name without its extension)
+  const t = h.campaignPaths(cfg, 'Spring Sale 2026!', 'United Summer.indd')
+  expect(t.pagePath('MedRect_300x250')).toBe('/ads/united-summer/spring-sale-2026/medrect-300x250')
+  expect(t.rowsPath).toBe('/ads/united-summer/spring-sale-2026/variations.json')
 })

@@ -46,8 +46,8 @@ const safeName = (n) => typeof n === 'string' && /^[^/\\\x00-\x1f.][^/\\\x00-\x1
 const rowName = (row, i) => String(row.outputFileName || `row${i + 1}`).trim()
 
 // One ad per (html5 size x variation row). `pages` / `rows` optionally narrow the list.
-function buildAds ({ pagemapText, csvText, outputs = [], cfg, campaign, pages, rows }) {
-  const paths = h.campaignPaths(cfg, campaign)
+function buildAds ({ pagemapText, csvText, outputs = [], cfg, campaign, template, pages, rows }) {
+  const paths = h.campaignPaths(cfg, campaign, template)
   const have = new Set(outputs)
   const sizes = h.pagemapHtml5(pagemapText).filter((p) => p.html5 && (!pages || pages.includes(p.pagename)))
   const variations = rowsFromRecords(csvRecords(String(csvText || ''))).map(rowName).filter((r) => !rows || rows.includes(r))

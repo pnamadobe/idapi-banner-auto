@@ -3,7 +3,7 @@
 // banner-ads `ad` block renders, plus the variations sheet it reads. Pure functions, no I/O.
 //
 // Block markup (one row per layer, back to front):
-//   size | 300x250 | duration 6 | loops 2 | rows /ads/<campaign>/variations.json
+//   size | 300x250 | duration 6 | loops 2 | rows /ads/<template>/<campaign>/variations.json
 //   name | image|text | source | x,y,w,h | motion | style
 const { csvRecords } = require('./csv')
 const { rowsFromRecords } = require('./psd')
@@ -193,9 +193,11 @@ function daConfig (params = {}, override = {}) {
   return cfg
 }
 
-// Paths for a campaign: { pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }
-function campaignPaths (cfg, campaign) {
-  const base = `${cfg.root}/${slug(campaign) || 'campaign'}`
+// Paths for a campaign: { pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
+// With a template, its file name (no extension) is a folder above the campaign: /ads/<template>/<campaign>/...
+function campaignPaths (cfg, campaign, template) {
+  const tpl = slug(String(template || '').replace(/\.[^.]+$/, ''))
+  const base = `${cfg.root}${tpl ? `/${tpl}` : ''}/${slug(campaign) || 'campaign'}`
   return {
     base,
     pagePath: (pagename) => `${base}/${slug(pagename)}`,

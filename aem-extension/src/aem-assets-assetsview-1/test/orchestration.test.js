@@ -90,12 +90,12 @@ test('PDFs count as deliverables', () => {
 describe('output modes', () => {
   const { keyFor, outputMode } = require('../actions/job-utils')
   test('mode selects images, images + editable, or editable only (legacy writeIndd still means both)', () => {
-    expect(outputMode({})).toEqual({ editable: false, images: true })
-    expect(outputMode({ mode: 'images' })).toEqual({ editable: false, images: true })
-    expect(outputMode({ writeIndd: '1' })).toEqual({ editable: true, images: true })
-    expect(outputMode({ mode: 'both', writeIndd: '1' })).toEqual({ editable: true, images: true })
-    expect(outputMode({ mode: 'editable', writeIndd: '1' })).toEqual({ editable: true, images: false })
-    expect(outputMode({ mode: 'editable' })).toEqual({ editable: true, images: false })
+    expect(outputMode({})).toEqual({ editable: false, images: true, html5: false })
+    expect(outputMode({ mode: 'images' })).toEqual({ editable: false, images: true, html5: false })
+    expect(outputMode({ writeIndd: '1' })).toEqual({ editable: true, images: true, html5: false })
+    expect(outputMode({ mode: 'both', writeIndd: '1' })).toEqual({ editable: true, images: true, html5: false })
+    expect(outputMode({ mode: 'editable', writeIndd: '1' })).toEqual({ editable: true, images: false, html5: false })
+    expect(outputMode({ mode: 'editable' })).toEqual({ editable: true, images: false, html5: false })
   })
   test('editable-only is its own job; the other keys are unchanged', () => {
     expect(keyFor('/f', true, 'a.psd', true)).not.toBe(keyFor('/f', true, 'a.psd', false))

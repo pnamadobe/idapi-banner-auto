@@ -36,12 +36,71 @@ function resolveActionUrl(action = 'generate-idapi-banners') {
 
 async function deterministicJobId(folder, mode, template) {
   // must match keyFor() in actions/job-utils.js
-  const input = new TextEncoder().encode(`${folder}|${mode === 'images' ? '0' : '1'}${template ? `|${template}` : ''}${mode === 'editable' ? '|editable-only' : ''}`);
+  const editable = mode === 'both' || mode === 'editable';
+  const input = new TextEncoder().encode(`${folder}|${editable ? '1' : '0'}${template ? `|${template}` : ''}${mode === 'editable' ? '|editable-only' : ''}${mode === 'html5' ? '|html5' : ''}`);
   const digest = await crypto.subtle.digest('SHA-256', input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 48);
 }
 
 const MAX_SHOWN_FINDINGS = 10;
+
+// HTML5 results: EDS preview links per size, then the CM360 packaging control.
+function Html5Panel({ html5, jobId, token }) {
+  const [pkg, setPkg] = useState(null);
+  const [pkgError, setPkgError] = useState('');
+  const url = resolveActionUrl('generate-idapi-banners-package');
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const call = async (extra) => {
+    const res = await actionWebInvoke(url, headers, { jobId, ...extra });
+    if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || `package action returned ${res.statusCode}`);
+    return res && res.body ? res.body : res;
+  };
+  useEffect(() => {
+    if (!url || !jobId) return undefined;
+    let cancelled = false;
+    const poll = () => call({ status: '1' }).then((b) => { if (!cancelled) setPkg(b); }).catch((e) => { if (!cancelled) setPkgError(String(e.message || e)); });
+    poll();
+    const timer = setInterval(() => { if (!pkg || pkg.status === 'running') poll(); }, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [jobId, pkg && pkg.status]);
+  const start = () => {
+    setPkgError('');
+    call({}).then((b) => setPkg({ ...b, done: b.done || 0 })).catch((e) => setPkgError(String(e.message || e)));
+  };
+  const pages = (html5 && html5.pages) || [];
+  const warnings = (html5 && html5.warnings) || [];
+  const running = pkg && pkg.status === 'running';
+  return (
+    <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+      <Flex direction="column" gap="size-75">
+        <Text><b>HTML5 banners</b> ({pages.length} size{pages.length === 1 ? '' : 's'}) — preview on EDS:</Text>
+        {pages.map((p) => (
+          <Text key={p.page}>
+            {p.previewUrl ? <a href={p.previewUrl} target="_blank" rel="noopener noreferrer">{p.page} ↗</a> : p.page}
+            {p.rows ? ` · ${p.rows} variation${p.rows === 1 ? '' : 's'}` : ''}
+          </Text>
+        ))}
+        {warnings.slice(0, 5).map((w, i) => <Text key={`w-${i}`}>⚠ {typeof w === 'string' ? w : (w.message || JSON.stringify(w))}</Text>)}
+        {!url && <Text>The package action URL is not configured.</Text>}
+        {pkg && pkg.status !== 'none' && (
+          <Text>
+            <b>CM360 package:</b> {pkg.status}{typeof pkg.ads === 'number' ? ` — ${pkg.done || 0}/${pkg.ads} ads` : ''}
+            {pkg.failed ? `, ${pkg.failed} failed` : ''}{pkg.output ? ` → ${pkg.output}` : ''}
+          </Text>
+        )}
+        {pkg && pkg.error && <Text>✖ {pkg.error}</Text>}
+        {pkgError && <Text>✖ {pkgError}</Text>}
+        {url && (
+          <ButtonGroup>
+            <Button variant="primary" isDisabled={running || !pages.length} onPress={start}>
+              {running ? 'Packaging…' : (pkg && pkg.status === 'done' ? 'Re-package for CM360' : 'Package for CM360')}
+            </Button>
+          </ButtonGroup>
+        )}
+      </Flex>
+    </View>
+  );
+}
 
 // Errors first, then warnings; the start action's 422 and the preflight estimate share this shape.
 function FindingsPanel({ findings }) {
@@ -172,7 +231,8 @@ export default function ModalIndesignBannersGeneration() {
     // a spinner: race a short window to surface fast failures (auth/missing inputs);
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
-    const params = { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'images' ? '' : '1' };
+    const params = { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'both' || mode === 'editable' ? '1' : '' };
+    if (mode === 'html5') params.writeHtml5 = '1';
     if (override && hasErrors) params.preflightOverride = '1';
     const call = actionWebInvoke(url, {}, params)
       .then((r) => ({ done: true, r }))
@@ -234,6 +294,10 @@ export default function ModalIndesignBannersGeneration() {
               Choose <b>Generate banners</b> for the flattened images only, <b>+ editable file</b> to also
               write a reopenable {editableKind} per variation (larger output), or <b>Editable files only</b> to
               skip the flattened images{/\.psd$/i.test(template) ? '' : ' (each INDD still gets its preview and a multi-page PDF)'}.
+              {editableKind === 'INDD' && (
+                <> <b>Generate HTML5 banners</b> publishes only the pagemap's HTML5 sizes as Document Authoring pages
+                  in <b>{(estimate && estimate.html5Site) || 'pnamadobe/banner-ads'}</b>{estimate && estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}, previewed on EDS (no flattened images; run <b>Generate banners</b> for those). Package them for CM360 afterwards.</>
+              )}
             </Text>
             {estimate && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -256,6 +320,9 @@ export default function ModalIndesignBannersGeneration() {
             )}
             <ButtonGroup orientation="vertical" width="100%">
               <Button variant="accent" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('images')}>Generate banners</Button>
+              <Button variant="primary" width="100%" isDisabled={(hasErrors && !override) || editableKind === 'PSD'} onPress={() => generate('html5')}>
+                {editableKind === 'PSD' ? 'HTML5 banners (InDesign templates only for now)' : 'Generate HTML5 banners'}
+              </Button>
               <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('both')}>Generate banners + editable file</Button>
               <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('editable')}>Editable {editableKind}s only (no flattened images)</Button>
               <Button variant="secondary" width="100%" onPress={close}>Cancel</Button>
@@ -316,7 +383,7 @@ export default function ModalIndesignBannersGeneration() {
 
         {status === 'done' && result && (
           <Flex direction="column" gap="size-150">
-            <Heading level={3}>{result.reused ? '✓ Existing generation found' : `✓ ${result.count} banner(s) generated`}</Heading>
+            <Heading level={3}>{result.reused ? '✓ Existing generation found' : result.writeHtml5 ? '✓ HTML5 banners generated' : `✓ ${result.count} banner(s) generated`}</Heading>
             <Text>
               {result.reused
                 ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
@@ -332,6 +399,8 @@ export default function ModalIndesignBannersGeneration() {
                 <Text>Keep this ID if you need to check the manifest or troubleshoot the generation.</Text>
               </View>
             )}
+            {result.html5 && <Html5Panel html5={result.html5} jobId={result.jobId} token={job.token} />}
+            {result.writeHtml5 && !result.html5 && <Text>HTML5 pages were not published for this job; check the job warnings.</Text>}
             {Array.isArray(result.outputs) && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-2000" overflow="auto">
                 <Text>{result.outputs.slice(0, 20).join(', ')}{result.outputs.length > 20 ? ' …' : ''}</Text>

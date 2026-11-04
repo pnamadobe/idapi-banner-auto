@@ -8,6 +8,7 @@ const { errorResponse, stringParameters, checkMissingRequestInputs } = require('
 const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = require('../job-utils')
 const { inspectInputs, resolveOutputFolder } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
+const { daConfig, campaignPaths } = require('./html5')
 
 const ttl = 7 * 24 * 3600
 
@@ -35,6 +36,13 @@ async function main (params) {
     if (template && !isTemplateName(template)) return errorResponse(400, 'template must be the file name of an .indd or .psd in the folder', logger)
     if (String(params.preflight || '') === '1') {
       const estimate = await inspectInputs({ ...params, template })
+      // Where HTML5 pages would go, for the modal (a bad setting just leaves it out).
+      try {
+        const cfg = daConfig(params)
+        const tpl = estimate.template || template
+        estimate.html5Site = `${cfg.org}/${cfg.site}`
+        estimate.html5Path = campaignPaths(cfg, params.folder.split('/').pop(), tpl).base
+      } catch (e) { /* not configured */ }
       return { statusCode: 200, body: estimate }
     }
     // Preflight gate: errors stop the start (HTTP 422) unless preflightOverride=1. Not run for a job that
@@ -59,8 +67,9 @@ async function main (params) {
       if (checked) job.findings = checked.findings.slice(0, MAX_STORED_FINDINGS)
     }
     const state = await stateLib.init()
-    const { editable: writeIndd, images: writeImages } = outputMode(params)
-    const stateKey = keyFor(params.folder, writeIndd, template, !writeImages)
+    const { editable: writeIndd, images: writeImages, html5: writeHtml5 } = outputMode(params)
+    if (writeHtml5 && /\.psd$/i.test(template)) return errorResponse(400, 'HTML5 banners need an InDesign template for now', logger)
+    const stateKey = keyFor(params.folder, writeIndd, template, writeIndd && !writeImages, writeHtml5)
     const existing = await state.get(stateKey)
     if (existing) {
       const job = JSON.parse(existing.value)
@@ -73,6 +82,7 @@ async function main (params) {
       const blocked = await gate()
       if (blocked) return blocked
       stamp(job)
+      job.writeImages = writeImages // jobs saved before HTML5 runs dropped the flattened images
       if (stale) {
         if (forced) await state.delete(`${stateKey}-lock`)
         job.status = 'queued'
@@ -85,6 +95,7 @@ async function main (params) {
         job.status = 'queued'
         job.rowOffset = 0
         job.outputs = []
+        delete job.html5
         job.outputFolder = await resolveOutputFolder({ ...params, aemAuthorUrl: job.aemAuthorUrl || params.aemAuthorUrl })
         delete job.error
         job.retriedAt = new Date().toISOString()
@@ -111,6 +122,7 @@ async function main (params) {
       aemAuthorUrl: params.aemAuthorUrl || '',
       writeIndd,
       writeImages,
+      writeHtml5,
       batchSize: Math.max(1, Math.min(10, Number(params.batchSize) || 2)),
       outputFolder: await resolveOutputFolder(params),
       rowOffset: 0,

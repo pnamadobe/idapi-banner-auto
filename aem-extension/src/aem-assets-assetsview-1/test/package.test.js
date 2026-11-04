@@ -45,6 +45,11 @@ test('buildAds narrows by pages and rows', () => {
   expect(ads.map((a) => a.name)).toEqual(['Half_300x600_Summer'])
 })
 
+test('buildAds puts ads under the template sub-folder', () => {
+  const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({}), campaign: 'Spring Sale', template: 'United Summer.indd', pages: ['Half_300x600'], rows: ['Summer'] })
+  expect(ads[0].path).toBe('/ads/united-summer/spring-sale/half-300x600')
+})
+
 test('expectedNames and mimeFor', () => {
   expect(pkg.expectedNames({ name: 'A' })).toEqual(['A.zip', 'A_preview.gif', 'A_storyboard.jpg'])
   expect(['a.zip', 'a.gif', 'a.JPG', 'a.exe'].map(pkg.mimeFor)).toEqual(['application/zip', 'image/gif', 'image/jpeg', undefined])

@@ -101,7 +101,7 @@ async function publishHtml5 (ctx) {
   const { cfg, author, aemToken, deps } = ctx
   const warnings = []
   const warn = (code, message) => { warnings.push({ code, message }); if (ctx.logger) ctx.logger.warn(`${code}: ${message}`) }
-  const paths = h.campaignPaths(cfg, ctx.campaign)
+  const paths = h.campaignPaths(cfg, ctx.campaign, ctx.template)
   const pages = []
   const manifest = ctx.manifest || {}
   const pm = h.pagemapHtml5(ctx.pagemapText).filter((p) => p.html5)

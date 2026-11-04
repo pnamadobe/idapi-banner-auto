@@ -607,12 +607,16 @@ async function processBatch (params, job, state) {
     if (maxRows > 0) varText = truncateCsv(varText, maxRows, rowOffset)
     // HTML5 (DA / Edge Delivery) runs with the first batch only: one design per size, rows bind at view time
     const wantHtml5 = rowOffset === 0 && /^(1|true|yes)$/i.test(String(params.writeHtml5 || ''))
+    // HTML5-only run (the HTML5 button): no flattened images. The script exports the HTML5 layers before its row
+    // loop, so the render gets a header-only CSV and renders no rows; the batch rows still plan the image sources.
+    const flag = (v) => /^(1|true|yes)$/i.test(String(v || ''))
+    const html5Only = wantHtml5 && !flag(params.writeIndd) && flag(params.skipImages)
     // swapped images: job-folder images, images in its subfolders (referenced by path or by name), plus
     // those AEM-linked in the template that the CSV references. Each is staged under one flat name and
     // the CSV cells are rewritten to those names.
     const plan = await planImages(author, aemToken, folder, c, varText, { allowBareUnresolved: true })
     varText = rewriteCsvText(varText, plan)
-    staged.push({ dest: destFor('variations'), buf: Buffer.from(varText, 'utf8') })
+    staged.push({ dest: destFor('variations'), buf: Buffer.from(html5Only ? truncateCsv(varText, 0) : varText, 'utf8') })
     const pagemapBuf = await aemDownload(author, aemToken, folder + '/' + c.pagemap.name)
     staged.push({ dest: destFor('pagemap'), buf: pagemapBuf })
     const firstPage = psd.pagemapNames(csvRecords(pagemapBuf.toString('utf8')))[0] || '' // its JPG becomes each .indd's AEM preview
@@ -687,8 +691,8 @@ async function processBatch (params, job, state) {
       if (job && (job.outputs || []).includes(name)) continue
       // Editable-only run: the rendered page images are not delivered. The first page's JPG is still kept in
       // memory as the .indd's AEM preview (see attachPreview below); every other image is skipped unfetched.
-      if (skipImages && /\.(jpe?g|png)$/i.test(name)) {
-        const pk = previewKey(name, firstPage)
+      if ((skipImages || html5Only) && /\.(jpe?g|png)$/i.test(name)) {
+        const pk = writeIndd && previewKey(name, firstPage)
         if (pk) previews.set(pk, Buffer.from(await (await fetch(o.url)).arrayBuffer()))
         continue
       }
@@ -763,7 +767,7 @@ async function processBatch (params, job, state) {
     if (remapWarnings.length) logger.warn(`remap warnings: ${remapWarnings.join(' | ')}`)
 
     // 5c. HTML5: slices to AEM (approved, for Dynamic Media delivery), one DA page per size plus the
-    // variations sheet, then an EDS preview. The JPGs are already written, so every failure only warns.
+    // variations sheet, then an EDS preview. Any JPGs are already written, so every failure only warns.
     let html5Result
     if (wantHtml5) {
       try {
@@ -781,6 +785,7 @@ async function processBatch (params, job, state) {
           outFolder,
           folder,
           campaign: folder.split('/').pop(),
+          template: c.template.name,
           manifest: html5Manifest,
           pagemapText: pagemapBuf.toString('utf8'),
           csvText: fullVarText,
@@ -826,7 +831,8 @@ async function processBatch (params, job, state) {
         variations: c.variations.name,
         fonts: fontByName.size,
         count: written.filter(isDeliverable).length,
-        batchRows: Math.max(0, csvRecords(varText).length - 1),   // records, not lines: quoted cells may contain line breaks (cardname)
+        // an HTML5-only run is one batch: 0 rows tells the worker the job is done
+        batchRows: html5Only ? 0 : Math.max(0, csvRecords(varText).length - 1),   // records, not lines: quoted cells may contain line breaks (cardname)
         remapWarnings,
         relationsCreated,
         relationWarnings,

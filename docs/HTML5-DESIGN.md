@@ -58,8 +58,8 @@ Runtime worker (engine.js)
   1 render ── InDesign API: JPG backups (existing) + layer export (new, §4)
   2 import
      ├─ AEM DAM   output/html5/assets/<size>/…   slices                (approved on upload)
-     ├─ DA        /ads/<campaign>/variations     sheet  (from the variations CSV)
-     │            /ads/<campaign>/<size>         one layout page per size, `ad` block (§5)
+     ├─ DA        /ads/<template>/<campaign>/variations     sheet  (from the variations CSV)
+     │            /ads/<template>/<campaign>/<size>         one layout page per size, `ad` block (§5)
      └─ EDS admin preview → aem.page
         │
         ▼
@@ -134,7 +134,7 @@ v1; see "Deferred" in §16.
 
 ### 3.4 Variations
 
-The variations CSV is imported as the DA sheet `/ads/<campaign>/variations`, which EDS publishes as JSON. One
+The variations CSV is imported as the DA sheet `/ads/<template>/<campaign>/variations`, which EDS publishes as JSON. One
 row is `{ outputFileName, <label>: value…, clickthrough }`. `clickthrough` is a reserved column, never a Script
 Label: it becomes the zip's default `clickTag`. Image columns hold DAM file names as today and are resolved to
 delivery URLs on import.
@@ -184,12 +184,12 @@ checks latency and parameters).
 
 ### 5.2 One layout page per size
 
-`/ads/<campaign>/<pagename>`, for example `/ads/fairbanks/web_med_rectangle_300x250`. The worker writes it
+`/ads/<template>/<campaign>/<pagename>`, for example `/ads/<template>/fairbanks/web_med_rectangle_300x250`. The worker writes it
 through DA's source API as HTML in which the `ad` block is a table with one row per layer:
 
 | ad | | | | |
 |---|---|---|---|---|
-| size | 300x250 | duration 6 | loops 1 | rows `/ads/fairbanks/variations.json` |
+| size | 300x250 | duration 6 | loops 1 | rows `/ads/<template>/fairbanks/variations.json` |
 | static-0 | image | *(delivery URL)* | 0,0,300,250 | none |
 | hero | image | `{hero}` | 0,0,300,250 | kenburns |
 | static-1 | image | *(delivery URL)* | 0,140,300,110 | none |
@@ -206,7 +206,7 @@ through DA's source API as HTML in which the `ad` block is a table with one row 
 
 A layout page renders any row with `?v=<outputFileName>`: the block fetches the sheet JSON and fills the bound
 layers. That is one page per size, not sizes × rows, so a layout fix applies to every row.
-`aem.page/ads/fairbanks/web_med_rectangle_300x250?v=FAIR-EN-01` is the live, shareable preview of that ad.
+`aem.page/ads/<template>/fairbanks/web_med_rectangle_300x250?v=FAIR-EN-01` is the live, shareable preview of that ad.
 
 ---
 
