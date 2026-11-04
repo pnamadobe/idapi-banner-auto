@@ -109,3 +109,17 @@ test('daConfig: defaults, override, validation; campaignPaths', () => {
   expect(t.pagePath('MedRect_300x250')).toBe('/ads/united-summer/spring-sale-2026/medrect-300x250')
   expect(t.rowsPath).toBe('/ads/united-summer/spring-sale-2026/variations.json')
 })
+
+test('pagemap without an html5 column opts every page in', () => {
+  const text = 'pagenumber,pagename\n1,WEB_LEADERBOARD_1000x320\n2,MedRect_300x250\n'
+  expect(h.pagemapHtml5(text).map((p) => p.html5)).toEqual([true, true])
+  const all = h.pagemapAllHtml5(text)
+  expect(all.split('\n')[0]).toBe('pagenumber,pagename,html5')
+  expect(all).toContain('2,MedRect_300x250,yes')
+  expect(h.pagemapHtml5(all).map((p) => p.html5)).toEqual([true, true])
+})
+
+test('pagemap with an html5 column is left as authored', () => {
+  expect(h.pagemapAllHtml5(PAGEMAP)).toBe(PAGEMAP)
+  expect(h.pagemapHtml5(PAGEMAP).filter((p) => p.html5).length).toBe(2)
+})

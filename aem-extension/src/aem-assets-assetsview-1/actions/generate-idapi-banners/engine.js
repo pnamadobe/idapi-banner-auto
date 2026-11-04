@@ -618,7 +618,8 @@ async function processBatch (params, job, state) {
     varText = rewriteCsvText(varText, plan)
     staged.push({ dest: destFor('variations'), buf: Buffer.from(html5Only ? truncateCsv(varText, 0) : varText, 'utf8') })
     const pagemapBuf = await aemDownload(author, aemToken, folder + '/' + c.pagemap.name)
-    staged.push({ dest: destFor('pagemap'), buf: pagemapBuf })
+    // HTML5 runs: a pagemap without an html5 column means every page (the script only exports layers for html5=yes pages).
+    staged.push({ dest: destFor('pagemap'), buf: wantHtml5 ? Buffer.from(html5.pagemapAllHtml5(pagemapBuf.toString('utf8')), 'utf8') : pagemapBuf })
     const firstPage = psd.pagemapNames(csvRecords(pagemapBuf.toString('utf8')))[0] || '' // its JPG becomes each .indd's AEM preview
     const { fromLinks } = await resolveImages(author, folder, templateBuf, plan)
     const aemSource = new Map(c.images.map((im) => [im.name, `${folder}/${im.name}`]))

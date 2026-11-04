@@ -44,9 +44,22 @@ function parseMotionMap (str) {
   return { map, unknown }
 }
 
+// A pagemap without an `html5` column opts every page in (the HTML5 button was pressed on purpose);
+// with the column, only rows marked yes are HTML5.
+const hasHtml5Column = (records) => records.length > 0 && rowsFromRecords([records[0], '']).some((r) => Object.prototype.hasOwnProperty.call(r, 'html5'))
+
+// The pagemap the InDesign script reads: adds html5=yes to every page when the column is missing.
+function pagemapAllHtml5 (text) {
+  const records = csvRecords(String(text || ''))
+  if (!records.length || hasHtml5Column(records)) return String(text || '')
+  return [`${records[0]},html5`, ...records.slice(1).map((r) => (String(r).trim() ? `${r},yes` : r))].join('\n')
+}
+
 // Pagemap CSV -> [{ pagenumber, pagename, html5, motion, unknownMotion, duration, loops, budgetKB, tooLong }]
 function pagemapHtml5 (text) {
-  return rowsFromRecords(csvRecords(String(text || '')))
+  const records = csvRecords(String(text || ''))
+  const all = !hasHtml5Column(records)
+  return rowsFromRecords(records)
     .map((r) => {
       const { map, unknown } = parseMotionMap(r.motion)
       const duration = num(r.duration, DEFAULTS.duration)
@@ -54,7 +67,7 @@ function pagemapHtml5 (text) {
       return {
         pagenumber: Number(r.pagenumber),
         pagename: String(r.pagename || '').trim(),
-        html5: yes(r.html5),
+        html5: all || yes(r.html5),
         motion: map,
         unknownMotion: unknown,
         duration,
@@ -212,6 +225,7 @@ module.exports = {
   normalizeMotion,
   parseMotionMap,
   pagemapHtml5,
+  pagemapAllHtml5,
   styleTokens,
   layersFromManifest,
   daPageHtml,

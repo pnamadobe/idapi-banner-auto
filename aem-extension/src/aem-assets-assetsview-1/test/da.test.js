@@ -103,6 +103,6 @@ test('publishHtml5 stops early without DA access and flags unapproved images', a
 
 test('publishHtml5 with no html5 pages', async () => {
   mockFetch([])
-  const r = await da.publishHtml5(ctx({ pagemapText: 'pagenumber,pagename\n1,A\n' }))
+  const r = await da.publishHtml5(ctx({ pagemapText: 'pagenumber,pagename,html5\n1,A,no\n' }))
   expect(r.warnings.map((w) => w.code)).toEqual(['HTML5_NO_PAGES'])
 })

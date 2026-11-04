@@ -60,13 +60,13 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
     return res && res.body ? res.body : res;
   };
   useEffect(() => {
-    if (!url || !jobId) return undefined;
+    if (!url || !jobId || !token) return undefined;
     let cancelled = false;
-    const poll = () => call({ status: '1' }).then((b) => { if (!cancelled) setPkg(b); }).catch((e) => { if (!cancelled) setPkgError(String(e.message || e)); });
+    const poll = () => call({ status: '1' }).then((b) => { if (!cancelled) { setPkg(b); setPkgError(''); } }).catch((e) => { if (!cancelled) setPkgError(String(e.message || e)); });
     poll();
     const timer = setInterval(() => { if (!pkg || pkg.status === 'running') poll(); }, 15000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [jobId, pkg && pkg.status]);
+  }, [jobId, token, pkg && pkg.status]);
   const start = () => {
     setPkgError('');
     call({}).then((b) => setPkg({ ...b, done: b.done || 0 })).catch((e) => setPkgError(String(e.message || e)));
@@ -146,11 +146,13 @@ export default function ModalIndesignBannersGeneration() {
   const [confetti, setConfetti] = useState(false);
   const [html5Run, setHtml5Run] = useState(false);
   const [lastHtml5, setLastHtml5] = useState(null); // a completed HTML5 job for this folder, so it can be packaged later
+  const [imsToken, setImsToken] = useState(job.token || ''); // the user's own token: the package action checks their folder access
 
   useEffect(() => {
     (async () => {
       const gc = await attach({ id: extensionId });
       setGuestConnection(gc);
+      try { const auth = gc.sharedContext.get('auth'); if (auth && auth.imsToken) setImsToken(auth.imsToken); } catch (e) {}
       try { const t = await gc.host.theme.getThemeInfo(); if (t && t.colorScheme) setColorScheme(t.colorScheme); } catch (e) {}
     })();
   }, []);
@@ -335,7 +337,7 @@ export default function ModalIndesignBannersGeneration() {
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
             {error && <Text><b>{error}</b></Text>}
-            {lastHtml5 && <Html5Panel html5={lastHtml5.html5} jobId={lastHtml5.jobId} token={job.token} folderUrl={html5FolderUrl(lastHtml5, estimate)} />}
+            {lastHtml5 && <Html5Panel html5={lastHtml5.html5} jobId={lastHtml5.jobId} token={imsToken} folderUrl={html5FolderUrl(lastHtml5, estimate)} />}
             {findings.length > 0 && <FindingsPanel findings={findings} />}
             {hasErrors && (
               <Checkbox isSelected={override} onChange={setOverride}>
@@ -433,11 +435,13 @@ export default function ModalIndesignBannersGeneration() {
             )}
             {result.jobId && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
-                <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
-                <Text>Keep this ID if you need to check the manifest or troubleshoot the generation.</Text>
+                <Flex direction="column" gap="size-100">
+                  <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>
+                  <Text>Keep this ID if you need to check the manifest or troubleshoot the generation.</Text>
+                </Flex>
               </View>
             )}
-            {result.html5 && <Html5Panel html5={result.html5} jobId={result.jobId} token={job.token} folderUrl={html5FolderUrl(result, estimate)} />}
+            {result.html5 && <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} folderUrl={html5FolderUrl(result, estimate)} />}
             {result.writeHtml5 && !result.html5 && <Text>HTML5 pages were not published for this job; check the job warnings.</Text>}
             {Array.isArray(result.outputs) && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-2000" overflow="auto">
