@@ -1,3 +1,7 @@
+# Local secrets anywhere in the repo (examples stay tracked)
+.env
+.env.*
+!.env.example
 cloud/.env
 cloud/.env.*
 !cloud/.env.example

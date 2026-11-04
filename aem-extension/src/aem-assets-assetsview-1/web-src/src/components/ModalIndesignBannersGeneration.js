@@ -145,7 +145,6 @@ export default function ModalIndesignBannersGeneration() {
   const notFoundPolls = useRef(0);
   const [confetti, setConfetti] = useState(false);
   const [html5Run, setHtml5Run] = useState(false);
-  const [lastHtml5, setLastHtml5] = useState(null); // a completed HTML5 job for this folder, so it can be packaged later
   const [imsToken, setImsToken] = useState(job.token || ''); // the user's own token: the package action checks their folder access
 
   useEffect(() => {
@@ -174,21 +173,6 @@ export default function ModalIndesignBannersGeneration() {
   };
 
   useEffect(() => { inspect(); }, [folder, template, aemAuthorUrl]);
-
-  // Look up this folder's HTML5 job so "Package for CM360" is reachable after the generation dialog was closed.
-  useEffect(() => {
-    const url = resolveActionUrl('generate-idapi-banners-status');
-    if (!folder || !url || /\.psd$/i.test(template)) return undefined;
-    let cancelled = false;
-    deterministicJobId(folder, 'html5', template)
-      .then((id) => actionWebInvoke(url, {}, { jobId: id }))
-      .then((res) => {
-        const body = res && res.body ? res.body : res;
-        if (!cancelled && body && body.status === 'completed' && body.html5) setLastHtml5(body);
-      })
-      .catch(() => { /* no HTML5 job yet */ });
-    return () => { cancelled = true; };
-  }, [folder, template]);
 
   // Key on the job id, not the result object: each poll replaces `result`, which would
   // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
@@ -337,7 +321,6 @@ export default function ModalIndesignBannersGeneration() {
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {estimateError && <Text>Could not calculate output estimates; generation can still be started.</Text>}
             {error && <Text><b>{error}</b></Text>}
-            {lastHtml5 && <Html5Panel html5={lastHtml5.html5} jobId={lastHtml5.jobId} token={imsToken} folderUrl={html5FolderUrl(lastHtml5, estimate)} />}
             {findings.length > 0 && <FindingsPanel findings={findings} />}
             {hasErrors && (
               <Checkbox isSelected={override} onChange={setOverride}>
@@ -441,8 +424,15 @@ export default function ModalIndesignBannersGeneration() {
                 </Flex>
               </View>
             )}
-            {result.html5 && <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} folderUrl={html5FolderUrl(result, estimate)} />}
-            {result.writeHtml5 && !result.html5 && <Text>HTML5 pages were not published for this job; check the job warnings.</Text>}
+            {/* The HTML5 panel (sizes, DA link, Package for CM360) only after an HTML5 run that published pages. */}
+            {result.writeHtml5 && result.html5 && (result.html5.pages || []).length > 0
+              ? <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} folderUrl={html5FolderUrl(result, estimate)} />
+              : result.writeHtml5 && (
+                <Text>
+                  No HTML5 pages were published for this job.
+                  {((result.html5 && result.html5.warnings) || []).slice(0, 5).map((w, i) => <span key={`w-${i}`}><br />⚠ {typeof w === 'string' ? w : (w.message || JSON.stringify(w))}</span>)}
+                </Text>
+              )}
             {Array.isArray(result.outputs) && (
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-2000" overflow="auto">
                 <Text>{result.outputs.slice(0, 20).join(', ')}{result.outputs.length > 20 ? ' …' : ''}</Text>
