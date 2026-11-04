@@ -82,3 +82,41 @@ runtimeManifest:
             memorySize: 256
           annotations:
             final: true
+        generate-idapi-banners-package:
+          function: actions/generate-idapi-banners-package.js
+          web: 'yes'
+          runtime: nodejs:22
+          inputs:
+            AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            AEM_SC_JSON: $AEM_SC_JSON
+            AEM_DEV_TOKEN: $AEM_DEV_TOKEN
+            DA_ORG: $DA_ORG
+            DA_SITE: $DA_SITE
+            DA_ADS_ROOT: $DA_ADS_ROOT
+            EDS_REF: $EDS_REF
+            GITHUB_REPO: $GITHUB_REPO
+            GITHUB_DISPATCH_TOKEN: $GITHUB_DISPATCH_TOKEN
+            HTML5_WRITEBACK_SECRET: $HTML5_WRITEBACK_SECRET
+            HTML5_WRITEBACK_URL: $HTML5_WRITEBACK_URL
+          limits:
+            timeout: 60000
+            memorySize: 256
+          annotations:
+            final: true
+        # Called by the banner-ads packaging workflow, which has no Adobe identity; it is
+        # authorised by the HMAC writeback token minted by generate-idapi-banners-package.
+        html5-writeback:
+          function: actions/html5-writeback.js
+          web: 'yes'
+          runtime: nodejs:22
+          inputs:
+            AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            AEM_SC_JSON: $AEM_SC_JSON
+            AEM_DEV_TOKEN: $AEM_DEV_TOKEN
+            HTML5_WRITEBACK_SECRET: $HTML5_WRITEBACK_SECRET
+          limits:
+            timeout: 180000
+            memorySize: 512
+          annotations:
+            require-adobe-auth: false
+            final: true

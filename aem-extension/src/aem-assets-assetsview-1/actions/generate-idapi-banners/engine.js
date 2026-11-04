@@ -886,3 +886,6 @@ exports.aemUpload = aemUpload
 exports.aemDownload = aemDownload
 exports.writeJobManifest = writeJobManifest
 exports.jobManifestName = jobManifestName
+exports.aemListSafe = aemListSafe
+exports.verifyAemAsset = verifyAemAsset
+exports.aemApiPath = aemApiPath
