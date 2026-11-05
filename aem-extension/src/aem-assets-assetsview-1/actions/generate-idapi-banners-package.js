@@ -13,7 +13,10 @@ const pkg = require('./generate-idapi-banners/package')
 
 const TTL = 7 * 24 * 3600
 const MAX_ADS = 200 // keeps the dispatch payload well under GitHub's client_payload limit
-const STALE_MS = 45 * 60 * 1000
+// A running package with no writeback for this long is dead (cancelled or crashed job): each ad
+// reports within a few minutes, so the modal offers a re-package and a new run may replace it.
+const STALE_MS = 15 * 60 * 1000
+const isStale = (p) => p.status === 'running' && Date.now() - Date.parse(p.updatedAt || p.createdAt) >= STALE_MS
 const list = (v) => (v == null || v === '' ? undefined : (Array.isArray(v) ? v : String(v).split(',')).map((s) => String(s).trim()).filter(Boolean))
 
 function writebackUrl (params) {
@@ -61,13 +64,13 @@ async function main (params) {
       const failed = Object.values(results).filter((r) => r && r.ok === false).length
       return {
         statusCode: 200,
-        body: { jobId, status: p.status, ads: (p.ads || []).length, done: Object.keys(results).length, failed, error: p.error, output: `${p.outFolder}/html5/cm360`, updatedAt: p.updatedAt }
+        body: { jobId, status: isStale(p) ? 'stalled' : p.status, ads: (p.ads || []).length, done: Object.keys(results).length, failed, error: p.error, output: `${p.outFolder}/html5/cm360`, updatedAt: p.updatedAt }
       }
     }
     if (prev) {
       const p = JSON.parse(prev.value)
       const force = /^(1|true|yes)$/i.test(String(params.force || ''))
-      if (p.status === 'running' && Date.now() - Date.parse(p.updatedAt || p.createdAt) < STALE_MS && !force) {
+      if (p.status === 'running' && !isStale(p) && !force) {
         return { statusCode: 202, body: { jobId, status: p.status, ads: p.ads.length, done: Object.keys(p.results || {}).length } }
       }
     }

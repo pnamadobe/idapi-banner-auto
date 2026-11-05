@@ -111,12 +111,13 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
             {pkg.failed ? `, ${pkg.failed} failed` : ''}{pkg.output ? ` → ${pkg.output}` : ''}
           </Text>
         )}
+        {pkg && pkg.status === 'stalled' && <Text>⚠ The packaging job stopped without finishing (no progress for 15 minutes). Re-package to run it again.</Text>}
         {pkg && pkg.error && <Text>✖ {pkg.error}</Text>}
         {pkgError && <Text>✖ {pkgError}</Text>}
         {url && (
           <ButtonGroup>
             <Button variant="primary" isDisabled={running || !pages.length} onPress={start}>
-              {running ? 'Packaging…' : (pkg && pkg.status === 'done' ? 'Re-package for CM360' : 'Package for CM360')}
+              {running ? 'Packaging…' : (pkg && (pkg.status === 'done' || pkg.status === 'stalled') ? 'Re-package for CM360' : 'Package for CM360')}
             </Button>
           </ButtonGroup>
         )}
