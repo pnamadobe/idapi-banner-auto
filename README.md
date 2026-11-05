@@ -1,4 +1,4 @@
-# 🎨 Banner Automation — on-brand banners (InDesign **and** Photoshop templates)
+# 🎨 Banner Automation — on-brand static and HTML5 banners (InDesign **and** Photoshop templates)
 
 **One template. One CSV. Every size, every variation — rendered automatically, perfectly on-brand.**
 
@@ -7,6 +7,12 @@ production-ready banners — every ad size, every localized variant — without 
 designer ever touching InDesign. It runs **headless in the cloud** on the Adobe
 InDesign API: no desktop app, no manual export, no workstation in the loop — a
 whole campaign's worth of on-brand banners, rendered on demand.
+
+> **New: animated HTML5 banners from the same InDesign template.** Mark pages `html5` in the page map and
+> **Generate HTML5 banners** in the Generate Banners dialog turns the `.indd` into live, animated ads: one Edge Delivery Services page per
+> size, previewable for every variation, then packaged as **CM360-ready zips** with a GIF preview and a
+> storyboard. No HTML authoring and no second design file. See
+> [HTML5 banners and CM360 zips](#html5-banners-and-cm360-zips).
 
 > **Works with InDesign (`.indd`) and Photoshop (`.psd`) templates.** Select either in
 > AEM Assets View and click **Generate Banners** — InDesign templates render on the
@@ -45,6 +51,7 @@ slow, it doesn't scale, and every manual step is a chance to drift off-brand.
                            ▼
         every size × every variation, on-brand
         rendered as JPG + editable INDD — in seconds, unattended
+        and, for html5 pages, animated HTML5 ads + CM360 zips
 ```
 
 - **The template holds the design.** Colors, type, spacing, logo lockups,
@@ -57,7 +64,7 @@ slow, it doesn't scale, and every manual step is a chance to drift off-brand.
 - **The script does the work.** It lays out every size for every row, places the
   right imagery, fits the copy, and exports — deterministically, every time.
 
-## Why InDesign, and not Photoshop?
+## Why InDesign, in addition to Photoshop
 
 This same automation already exists in Photoshop, and Photoshop is superb at
 image compositing. But a banner is, at its core, a **typographic layout
@@ -149,6 +156,8 @@ flowchart LR
 - **Governed by design, not by discipline.** On-brand output isn't a review
   step you hope people follow — it's a property of the template they can't
   bypass.
+- **Static and HTML5 from one source.** The same INDD drives the JPG/PNG set and the animated HTML5 set,
+  so display and rich-media ads never drift apart.
 - **Zero dependencies.** The cloud harness is a single Node ≥ 18 file: no npm
   install, no supply chain, easy to audit and drop anywhere.
 
@@ -241,13 +250,14 @@ the first file named `*template*.indd|psd` is used.)
 
 ### What to generate
 
-The Generate Banners dialog offers three choices, for both InDesign and Photoshop templates:
+The Generate Banners dialog offers these choices (the first three for both InDesign and Photoshop templates):
 
 | Button | You get |
 |---|---|
 | **Generate banners** | The flattened JPGs only (one per page/size per variation). |
 | **Generate banners + editable file** | The JPGs **and** one editable file per variation: an `.indd` (with its multi-page PDF and a preview) or a `.psd`. |
 | **Editable files only** | Just the editable `.indd` (plus its PDF and AEM preview) or `.psd`, with **no flattened images** uploaded. |
+| **Generate HTML5 banners** (InDesign) | Animated HTML5 ads: one EDS page per `html5` size with a preview link per variation, then **Package for CM360** for zips, GIF previews and storyboards. See [HTML5 banners and CM360 zips](#html5-banners-and-cm360-zips). |
 
 Each choice is its own job, so you can run images first and editable files later without them blocking each other.
 For InDesign, the page images are still rendered (the first page becomes the `.indd`'s AEM preview) but not uploaded;
@@ -362,7 +372,7 @@ the Assets Author API), the job still succeeds and the reason is returned as
 
 ## HTML5 banners and CM360 zips
 
-The same template can also produce **animated HTML5 ads**. Pages marked `html5` in the page map are exported by
+**An InDesign template is now enough to ship animated HTML5 banners.** The same template can also produce **animated HTML5 ads**. Pages marked `html5` in the page map are exported by
 the InDesign API as live layers (labelled text and images) over transparent PNG slices. The extension writes one
 Edge Delivery Services page per size and a variations sheet into Document Authoring, so every size × row has a
 live preview URL. **Package for CM360** then runs a GitHub Actions workflow in your site repo that builds a
@@ -415,11 +425,13 @@ the folder's `output/`.
 - [x] AEM Assets View "Generate Banners" extension
 - [x] Photoshop (`.psd`) templates via the Adobe Photoshop API — layer-name contract, editable PSDs, AEM relations
 - [x] Timestamped output subfolders, output-folder link, selected-template handling
+- [x] Animated HTML5 banners from an InDesign template — EDS pages per size, variations, CM360 zips with GIF preview and storyboard
 
 ## Built with
 
 Adobe InDesign · Adobe InDesign API and Adobe Photoshop API (Firefly Services) · ExtendScript · Adobe IMS
-· Node.js · Adobe Experience Manager · App Builder / Adobe I/O Runtime
+· Node.js · Adobe Experience Manager · App Builder / Adobe I/O Runtime · Edge Delivery Services and
+Document Authoring · GitHub Actions
 
 ---
 
