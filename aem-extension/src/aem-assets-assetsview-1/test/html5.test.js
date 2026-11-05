@@ -29,6 +29,9 @@ test('styleTokens: text and image', () => {
     style: { font: 'Proxima "Nova"};', weight: 'Extra Bold', size: 22, lead: 24.04, color: 'FFFFFF', align: 'center', caps: true, track: 20, bg: '#E00', radius: 4, valign: 'middle', button: true }
   })).toBe('"Proxima Nova" ExtraBold 22/24 #ffffff center caps track:20 bg:#e00 radius:4 valign:middle button')
   expect(h.styleTokens({ kind: 'text', style: { font: 'Arial', weight: 'Regular', size: 12, color: 'red', align: 'left' } })).toBe('"Arial" 12')
+  expect(h.styleTokens({ kind: 'text', style: { size: 40, color: '#3a1f6b', stroke: '#E0D8FF', strokeW: 2.31 } })).toBe('40 #3a1f6b stroke:2.3,#e0d8ff')
+  expect(h.styleTokens({ kind: 'text', style: { size: 40, stroke: '#fff', strokeW: 2, strokeOut: true } })).toBe('40 stroke:4,#fff')
+  expect(h.styleTokens({ kind: 'text', style: { size: 40, stroke: '#fff', strokeW: 0 } })).toBe('40')
   expect(h.styleTokens({ kind: 'image', crop: { fx: 50.4, fy: 30 }, style: { fit: 'cover' } })).toBe('focus:50,30 fit:cover')
 })
 

@@ -54,7 +54,41 @@
         // brand lockup placed from a designer's local drive) to the staged copy of the
         // same filename: assets/shots/<name>, else assets/brand/<name>. Swapped heroes
         // are relinked again per CSV row; this only guarantees static art resolves.
-        var relinked = 0, missingLinks = []; // missingLinks: {name, label} still unresolved, for the preflight gate
+        // Why a placed graphic can't reach any exported page, or "" if it prints. Art on the
+        // pasteboard, on a hidden or non-printing layer, hidden itself (or inside a hidden group),
+        // marked non-printing, or on a master no page uses never shows up in a banner.
+        function linkPlacement(lk) {
+            try {
+                var g = lk.parent, fr = g.parent, node = fr, pg = null;
+                try { pg = fr.parentPage; } catch (ePg) {}
+                if (!pg) return "pasteboard";
+                try { var ly = fr.itemLayer; if (!ly.visible) return "hidden layer"; if (!ly.printable) return "non-printing layer"; } catch (eLy) {}
+                for (var depth = 0; node && depth < 20; depth++) {
+                    var cn = "";
+                    try { cn = node.constructor.name; } catch (eCn) {}
+                    if (cn === "Spread" || cn === "MasterSpread" || cn === "Document" || cn === "Page") break;
+                    try { if (node.visible === false) return "hidden"; } catch (eVis) {}
+                    try { if (node.nonprinting === true) return "non-printing"; } catch (eNp) {}
+                    try { node = node.parent; } catch (eUp) { node = null; }
+                }
+                var sp = pg.parent;
+                if (sp && sp.constructor.name === "MasterSpread") {
+                    for (var dp = 0; dp < doc.pages.length; dp++) {
+                        var am = null;
+                        try { am = doc.pages[dp].appliedMaster; } catch (eAm) {}
+                        // a master can be based on another master; walk that chain too
+                        for (var hop = 0; am && hop < 10; hop++) {
+                            if (am.id === sp.id) return "";
+                            try { am = am.appliedMaster; } catch (eAm2) { am = null; }
+                        }
+                    }
+                    return "unused master";
+                }
+            } catch (eWhere) {}
+            return "";
+        }
+
+        var relinked = 0, missingLinks = []; // missingLinks: {name, label, where} still unresolved, for the preflight gate
         try {
             for (var mi = 0; mi < doc.links.length; mi++) {
                 var ml = doc.links[mi];
@@ -68,7 +102,7 @@
                     // the Script Label sits on the placed graphic (brand template) or on its frame (United template)
                     try { mlabel = String(ml.parent.label || ""); } catch (eLb) {}
                     if (!mlabel) { try { mlabel = String(ml.parent.parent.label || ""); } catch (eLb2) {} }
-                    missingLinks.push({ name: String(ml.name), label: mlabel });
+                    missingLinks.push({ name: String(ml.name), label: mlabel, where: linkPlacement(ml) });
                 }
             }
         } catch (eRel) { warn.push("link preflight: " + eRel.message); }
@@ -354,14 +388,22 @@
             }
 
             // 5. placed art whose file is gone and isn't a CSV-driven image would stay a missing-link box.
-            var linkSeen = {};
+            var linkSeen = {}, unusedLinks = {};
             for (var lq = 0; lq < missingLinks.length; lq++) {
                 var ln = missingLinks[lq];
-                if (linkSeen[ln.name] || (ln.label && isField[ln.label])) continue; // a CSV column swaps it per row
+                if (ln.label && isField[ln.label]) continue; // a CSV column swaps it per row
+                if (ln.where) { unusedLinks[ln.name] = unusedLinks[ln.name] || ln.where; continue; }
+                if (linkSeen[ln.name]) continue;
                 linkSeen[ln.name] = true;
                 errs.push(findingJson("error", "INDD_LINK_MISSING",
                     'The template\'s placed image "' + ln.name + '" is missing and was not found among the staged images', null, null));
             }
+            // the same file can also be placed where it doesn't print; one printing copy makes it an error
+            var unusedList = [];
+            for (var un in unusedLinks) { if (unusedLinks.hasOwnProperty(un) && !linkSeen[un]) unusedList.push('"' + un + '" (' + unusedLinks[un] + ")"); }
+            if (unusedList.length) wrns.push(findingJson("warn", "INDD_LINK_UNUSED",
+                "Missing placed image(s) that don't appear on any exported page, so the banners are unaffected: " + unusedList.join(", ") +
+                ". Delete them from the template or relink them to silence this.", null, null));
 
             return { errs: errs, wrns: wrns, facts: '{"pages":' + pageCount + ',"labels":' + nLabels + ',"columns":' + fields.length +
                 ',"fonts":' + fontReport.length + ',"links":' + doc.links.length + '}' };
@@ -437,6 +479,12 @@
                 else if (t.justification === Justification.RIGHT_ALIGN) parts.push('"align":"right"');
                 if (t.capitalization === Capitalization.ALL_CAPS) parts.push('"caps":true');
                 if (t.tracking) parts.push('"track":' + t.tracking);
+                // Text outline: colour, weight (pt) and whether it sits outside the glyphs
+                var sc = colorHex(t.strokeColor);
+                if (sc && typeof t.strokeWeight === "number" && t.strokeWeight > 0) {
+                    parts.push('"stroke":' + jesc(sc) + ',"strokeW":' + t.strokeWeight);
+                    try { if (t.strokeAlignment === TextStrokeAlign.OUTSIDE_ALIGNMENT) parts.push('"strokeOut":true'); } catch (eSA) {}
+                }
             } catch (eT) {}
             var bg = colorHex(tf.fillColor);
             if (bg) parts.push('"bg":' + jesc(bg));
@@ -537,7 +585,7 @@
         if (h5Asked) writeHtml5();
         var paramKeys = [];
         try { var pjk = String(app.scriptArgs.get("parameters") || ""), km, kre = /\\?"([A-Za-z0-9_]+)\\?"\s*:/g; while ((km = kre.exec(pjk)) !== null) { if (paramKeys.length < 40) paramKeys.push(km[1]); } } catch (eK) {}
-        var h5Diag = "script build: html5-diag-5\nhtml5 requested: " + h5Asked + "\nhtml5 pages in pagemap: " + h5Gated +
+        var h5Diag = "script build: html5-diag-6\nhtml5 requested: " + h5Asked + "\nhtml5 pages in pagemap: " + h5Gated +
                      "\ntemplate pages: " + doc.pages.length + "\nhtml5 pages exported: " + html5Json.length +
                      "\nparameter keys: " + (paramKeys.length ? paramKeys.join(", ") : "(none)") + "\n";
 

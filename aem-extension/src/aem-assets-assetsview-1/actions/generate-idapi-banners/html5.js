@@ -118,6 +118,9 @@ function styleTokens (el) {
   if (['center', 'right'].includes(s.align)) t.push(s.align)
   if (s.caps) t.push('caps')
   if (Number(s.track)) t.push(`track:${Math.round(s.track)}`)
+  // InDesign centres a text stroke on the glyph edge (half of it outside); the block paints the
+  // stroke under the fill, so only the outer half shows: the CSS width is the outside part x2.
+  if (hex(s.stroke) && Number(s.strokeW) > 0) t.push(`stroke:${r1(s.strokeOut ? 2 * s.strokeW : s.strokeW)},${hex(s.stroke)}`)
   if (hex(s.bg)) t.push(`bg:${hex(s.bg)}`)
   if (Number(s.radius) > 0) t.push(`radius:${r1(s.radius)}`)
   if (['middle', 'bottom'].includes(s.valign)) t.push(`valign:${s.valign}`)
