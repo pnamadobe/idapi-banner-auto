@@ -377,6 +377,8 @@ demo site, so one user's HTML5 run can never write into another user's DA org or
 | `DA_ADS_ROOT` | no | `/ads` | where campaign folders go inside the site |
 | `EDS_REF` | no | `main` | branch used in preview URLs: `https://<ref>--<site>--<org>.aem.page/ads/…` |
 | `GITHUB_REPO` | no | `<DA_ORG>/<DA_SITE>` | only set when the repo name differs from the DA org and site |
+| `EYEBROW_RATIO` | no | `0.35` | HTML5 text sizing: a text layer directly above the page's largest text, in its column, is raised to at least this share of its size; its box grows upward into free space only. `0` = off |
+| `TEXT_SCALE` | no | none | `{ "<layer label>": factor }` (0.25 to 4) sizes named text layers in the HTML5 pages; overrides the eyebrow rule for them |
 
 Names are validated (no path tricks, `GITHUB_REPO` must be `owner/repo`). The file is read with the app's AEM
 credentials whenever the site is needed: preflight, job start, the worker's DA step and Package for CM360.

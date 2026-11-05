@@ -151,13 +151,67 @@ function unrotateBox (b, rot) {
   return { x: Number(b.x) + (W - w) / 2, y: Number(b.y) + (H - h) / 2, w, h }
 }
 
+// HTML5-only text sizing (the InDesign render and its JPGs keep the template's sizes). Any template:
+// - Eyebrow: a short line set directly above the page's largest text (a kicker like "GET" over
+//   "50,000") reads as a caption once animated on screen. When it is smaller than
+//   eyebrowRatio × that text's size it is raised to it. Its box grows upward into free space only,
+//   so it never runs into the text it sits over or the layer above it.
+// - scale: { <layer label>: factor } sizes named layers explicitly (and overrides the eyebrow rule
+//   for them; 1 leaves a layer as designed).
+// Both come from html5.json (EYEBROW_RATIO, TEXT_SCALE); eyebrowRatio 0 turns the rule off.
+const TEXT_DEFAULTS = { eyebrowRatio: 0.35, scale: {} }
+const overlapX = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) / Math.min(a.w, b.w)
+
+function textScales (elements, { eyebrowRatio = TEXT_DEFAULTS.eyebrowRatio, scale = {} } = {}) {
+  const texts = elements.filter((e) => e.kind !== 'image' && e.box && Number(e.style && e.style.size) > 0)
+  const out = new Map()
+  const lower = Object.fromEntries(Object.entries(scale).map(([k, v]) => [k.toLowerCase(), v]))
+  const top = texts.reduce((m, e) => (!m || e.style.size > m.style.size ? e : m), null)
+  for (const e of texts) {
+    const key = String(e.label || '').toLowerCase()
+    if (key in lower) { out.set(e, lower[key]); continue }
+    if (!top || e === top || !(eyebrowRatio > 0)) continue
+    const b = e.box
+    const t = top.box
+    const gap = t.y - (b.y + b.h)
+    const eyebrow = !e.style.button && gap >= -2 && gap <= Math.max(b.h, 0.25 * t.h) && overlapX(b, t) >= 0.5
+    const want = (eyebrowRatio * top.style.size) / e.style.size
+    if (eyebrow && want > 1) out.set(e, want)
+  }
+  // Room above each grown layer: up to the nearest layer above it in the same column, or the page top.
+  for (const [e, f] of out) {
+    if (!(f > 1)) continue
+    const b = e.box
+    const above = elements.filter((o) => o !== e && o.box && o.box.y + o.box.h <= b.y + 1 && overlapX(b, o.box) > 0)
+    const ceiling = above.reduce((m, o) => Math.max(m, o.box.y + o.box.h), 0) + 4
+    const maxH = b.y + b.h - ceiling
+    out.set(e, Math.max(1, Math.min(f, maxH / b.h)))
+  }
+  return out
+}
+
+// A text element with its size, leading and box height scaled by f, keeping its bottom edge.
+function scaleText (it, f) {
+  if (!(f > 0) || Math.abs(f - 1) < 0.01) return it
+  const s = it.style || {}
+  const b = it.box
+  const h = b.h * f
+  return {
+    ...it,
+    style: { ...s, size: s.size * f, ...(Number(s.lead) > 0 ? { lead: s.lead * f } : {}) },
+    box: { ...b, y: b.y + b.h - h, h }
+  }
+}
+
 // Page manifest -> block layers back to front. Slices carry an image URL (sliceUrl(slice));
 // elements bind to the sheet column named by their label. Motion: authored cell on the existing
 // DA page wins, then the pagemap motion map, else empty (the block picks a default).
-function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {} } = {}) {
+// text: { eyebrowRatio, scale } (see textScales).
+function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {}, text } = {}) {
+  const scales = textScales(page.elements || [], text)
   const items = [
     ...(page.slices || []).map((s, i) => ({ ...s, kind: 'image', slice: true, z: s.z == null ? i : s.z })),
-    ...(page.elements || []).map((e, i) => ({ ...e, name: e.label, z: e.z == null ? 1000 + i : e.z }))
+    ...(page.elements || []).map((e, i) => ({ ...scaleText(e, scales.get(e)), name: e.label, z: e.z == null ? 1000 + i : e.z }))
   ].sort((a, b) => a.z - b.z)
   return items.map((it) => {
     const name = String(it.name || it.label)
@@ -261,6 +315,27 @@ function noSite (message) {
   return e
 }
 const shown = (v) => JSON.stringify(String(v).slice(0, 64))
+// Optional HTML5 text sizing in html5.json: EYEBROW_RATIO (0 to 1) and TEXT_SCALE
+// ({ "<layer label>": factor 0.25 to 4 }). Bad values are reported, not silently ignored.
+function textConfig (site) {
+  const text = { eyebrowRatio: TEXT_DEFAULTS.eyebrowRatio, scale: {} }
+  if (site.EYEBROW_RATIO != null) {
+    const r = Number(site.EYEBROW_RATIO)
+    if (!(r >= 0 && r <= 1)) throw noSite(`html5.json: EYEBROW_RATIO ${shown(site.EYEBROW_RATIO)} must be a number from 0 to 1`)
+    text.eyebrowRatio = r
+  }
+  if (site.TEXT_SCALE != null) {
+    const m = site.TEXT_SCALE
+    if (!m || typeof m !== 'object' || Array.isArray(m)) throw noSite('html5.json: TEXT_SCALE must be an object like {"kicker": 1.5}')
+    for (const [k, v] of Object.entries(m)) {
+      const f = Number(v)
+      if (!SEG.test(k) || !(f >= 0.25 && f <= 4)) throw noSite(`html5.json: TEXT_SCALE ${shown(k)} must be a layer label with a factor from 0.25 to 4`)
+      text.scale[k.toLowerCase()] = f
+    }
+  }
+  return text
+}
+
 function daConfig (site = {}) {
   const pick = (k, d) => String(site[k] || d || '').trim()
   if (!pick('DA_ORG') || !pick('DA_SITE')) throw noSite(NO_SITE)
@@ -281,6 +356,7 @@ function daConfig (site = {}) {
   // The GitHub repo whose workflow packages the ads for CM360: the site's own repo unless named.
   cfg.repo = pick('GITHUB_REPO', `${cfg.org}/${cfg.site}`)
   if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(cfg.repo)) throw noSite(`html5.json: GITHUB_REPO ${shown(cfg.repo)} is not owner/repo`)
+  cfg.text = textConfig(site)
   return cfg
 }
 
@@ -317,6 +393,7 @@ module.exports = {
   pagemapAllHtml5,
   styleTokens,
   layersFromManifest,
+  textScales,
   unrotateBox,
   daPageHtml,
   readDaPage,

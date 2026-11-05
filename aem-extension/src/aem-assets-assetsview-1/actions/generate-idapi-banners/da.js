@@ -259,7 +259,7 @@ async function publishHtml5 (ctx) {
     const path = paths.pagePath(p.pagename)
     try {
       const authored = h.readDaPage(await daGet(cfg, ctx.daToken, `${path}.html`))
-      const layers = h.layersFromManifest(page, { sliceUrl: (s) => sliceUrls.get(s.name) || '', pagemapMotion: p.motion, authored })
+      const layers = h.layersFromManifest(page, { sliceUrl: (s) => sliceUrls.get(s.name) || '', pagemapMotion: p.motion, authored, text: cfg.text })
       const html = h.daPageHtml({ width: page.width, height: page.height, duration: p.duration, loops: p.loops, rowsPath: paths.rowsPath, layers })
       await daPut(cfg, ctx.daToken, `${path}.html`, html, 'text/html')
       await edsPreview(cfg, ctx.edsToken, path, ctx.edsBearer)

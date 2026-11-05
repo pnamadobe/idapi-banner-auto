@@ -104,6 +104,8 @@ folder below `/content/dam`. Saving from the dialog keeps any optional keys alre
 | `DA_ADS_ROOT` | `/ads` | campaign pages should go somewhere else in the site |
 | `EDS_REF` | `main` | previews should use another branch: `https://<ref>--<repo>--<owner>.aem.page` |
 | `GITHUB_REPO` | `<DA_ORG>/<DA_SITE>` | the GitHub repo name differs from the DA org and site |
+| `EYEBROW_RATIO` | `0.35` | a small line set right above the largest text (a kicker like "GET" over "50,000") should be raised to a different share of that text's size; `0` keeps the template's size. HTML5 only: the JPGs keep the template's sizes |
+| `TEXT_SCALE` | none | size named text layers in the HTML5 ads only, e.g. `{"kicker": 1.5, "legal": 1.2}` (factor 0.25 to 4; `1` leaves a layer as designed and skips the eyebrow rule for it) |
 
 Rules: the file must be a JSON object; `DA_ORG`, `DA_SITE` and `EDS_REF` may only contain letters, digits and `-`;
 `GITHUB_REPO` is `owner/repo`. Put **no tokens or secrets** in it. It is an ordinary DAM asset that anyone with
