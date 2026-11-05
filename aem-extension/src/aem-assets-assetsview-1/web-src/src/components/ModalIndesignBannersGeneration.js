@@ -219,6 +219,7 @@ export default function ModalIndesignBannersGeneration() {
   const notFoundPolls = useRef(0);
   const [confetti, setConfetti] = useState(false);
   const [html5Run, setHtml5Run] = useState(false);
+  const [lastHtml5, setLastHtml5] = useState(null); // last finished HTML5 run with published pages, if any
   const [editSite, setEditSite] = useState(false);
   const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): DA writes and the package action's folder check
 
@@ -250,8 +251,9 @@ export default function ModalIndesignBannersGeneration() {
   useEffect(() => { inspect(); }, [folder, template, aemAuthorUrl]);
 
   // On open, look up this template's HTML5 job (same id the start action uses). A finished run that
-  // published pages opens on its HTML5 panel, so it can be packaged without rendering again; a run
-  // still in progress resumes polling. Anything else (none yet, failed, no pages) leaves the start screen.
+  // published pages is remembered, and the start screen's HTML5 button becomes "Manage HTML5 banners"
+  // (the start screen stays, so INDD/PSD renders are still one click away). A run still in progress
+  // resumes polling. Anything else (none yet, failed, no pages) leaves the start screen as is.
   useEffect(() => {
     const url = resolveActionUrl('generate-idapi-banners-status');
     if (!folder || !template || !url || /\.psd$/i.test(template)) return undefined;
@@ -264,18 +266,26 @@ export default function ModalIndesignBannersGeneration() {
         if (cancelled || !body || !body.writeHtml5 || typeof body.status !== 'string') return;
         const published = body.status === 'completed' && body.html5 && (body.html5.pages || []).length > 0;
         const inProgress = body.status === 'queued' || body.status === 'running';
-        if (!published && !inProgress) return;
+        if (published) { setLastHtml5({ ...body, found: true }); return; }
+        if (!inProgress) return;
         // only take over the start screen: never replace a run the user just started
         setStatus((s) => {
           if (s !== 'idle') return s;
           setHtml5Run(true);
-          setResult(published ? { ...body, found: true } : body);
-          return published ? 'done' : 'started';
+          setResult(body);
+          return 'started';
         });
       } catch (e) { /* no earlier run: stay on the start screen */ }
     })();
     return () => { cancelled = true; };
   }, [folder, template]);
+
+  // An HTML5 run that finishes in this session becomes the one "Manage HTML5 banners" opens.
+  useEffect(() => {
+    if (status === 'done' && result && !result.found && result.writeHtml5 && result.html5 && (result.html5.pages || []).length > 0) {
+      setLastHtml5({ ...result, found: true });
+    }
+  }, [status, result]);
 
   // Key on the job id, not the result object: each poll replaces `result`, which would
   // otherwise re-run this effect and fire the next poll immediately instead of every 15s.
@@ -463,8 +473,16 @@ export default function ModalIndesignBannersGeneration() {
             )}
             <ButtonGroup orientation="vertical" width="100%">
               <Button variant="accent" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('images')}>Generate banners</Button>
-              <Button variant="primary" width="100%" isDisabled={editableKind === 'PSD'} onPress={() => { setError(''); setStatus('html5-confirm'); }}>
-                {editableKind === 'PSD' ? 'HTML5 banners (InDesign templates only for now)' : 'Generate HTML5 banners'}
+              <Button
+                variant="primary"
+                width="100%"
+                isDisabled={editableKind === 'PSD'}
+                onPress={() => {
+                  setError('');
+                  if (lastHtml5) { setHtml5Run(true); setResult(lastHtml5); setStatus('done'); } else setStatus('html5-confirm');
+                }}
+              >
+                {editableKind === 'PSD' ? 'HTML5 banners (InDesign templates only for now)' : lastHtml5 ? 'Manage HTML5 banners' : 'Generate HTML5 banners'}
               </Button>
               <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('both')}>Generate banners + editable file</Button>
               <Button variant="primary" width="100%" isDisabled={hasErrors && !override} onPress={() => generate('editable')}>Editable {editableKind}s only (no flattened images)</Button>
@@ -633,6 +651,7 @@ export default function ModalIndesignBannersGeneration() {
               </View>
             )}
             <ButtonGroup>
+              {result.found && <Button variant="secondary" onPress={() => { setResult(null); setHtml5Run(false); setError(''); setStatus('idle'); }}>Back</Button>}
               {result.found && <Button variant="secondary" onPress={() => { setResult(null); setError(''); setStatus('html5-confirm'); }}>Generate again</Button>}
               <Button variant="accent" onPress={close}>Close</Button>
             </ButtonGroup>
