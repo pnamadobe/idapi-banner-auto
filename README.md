@@ -360,6 +360,19 @@ the Assets Author API), the job still succeeds and the reason is returned as
 
 ---
 
+## HTML5 banners and CM360 zips
+
+The same template can also produce **animated HTML5 ads**. Pages marked `html5` in the page map are exported by
+the InDesign API as live layers (labelled text and images) over transparent PNG slices. The extension writes one
+Edge Delivery Services page per size and a variations sheet into Document Authoring, so every size × row has a
+live preview URL. **Package for CM360** then runs a GitHub Actions workflow in your site repo that builds a
+CM360-ready zip, a GIF preview and a storyboard for each ad, and writes them back to `output/html5/cm360`.
+
+* [docs/HTML5-HOW-IT-WORKS.md](docs/HTML5-HOW-IT-WORKS.md): requirements, template rules, the render, the EDS
+  pages, variations, packaging, and issue codes.
+* [docs/HTML5-SETUP.md](docs/HTML5-SETUP.md): one-time site setup (repo from
+  [`banner-ads`](https://github.com/pnamadobe/banner-ads), Code Sync, DA site, `html5.json`).
+
 ## Set up your own environment
 
 Standing this up in your own org — InDesign API entitlement → OAuth credential →

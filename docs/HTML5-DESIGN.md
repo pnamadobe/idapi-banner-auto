@@ -1,6 +1,7 @@
 # HTML5 banners on Edge Delivery Services, from an InDesign template — design
 
-**Status:** design (no code yet). **Date:** 2026-11-03. **Scope:** InDesign first; Photoshop follows (§13).
+**Status:** implemented (InDesign). This is the original design; where the build differs, the notes below say so, and
+[HTML5-HOW-IT-WORKS.md](HTML5-HOW-IT-WORKS.md) describes the current behaviour. **Date:** 2026-11-03. **Scope:** InDesign first; Photoshop follows (§13).
 
 **Decisions so far**
 
@@ -8,7 +9,7 @@
 |---|---|
 | Where ads live | AEM Edge Delivery Services (EDS) pages, authored in **Document Authoring** (da.live) |
 | Variation rows | a **DA sheet** (the variations CSV, imported); Content Fragments are not used |
-| Layers and images | the **AEM DAM**, referenced by Dynamic Media OpenAPI delivery URLs |
+| Layers and images | swapped images: the **AEM DAM**, by Dynamic Media OpenAPI delivery URLs. Generated slices: stored in **DA** beside each page (see §5.1) |
 | Layout source of truth | the **INDD**; re-running Generate rewrites geometry, and authors own copy and motion |
 | Packaging | a headless browser in GitHub Actions; zips and visual renditions written back to the DAM |
 | Packaging trigger | its own **"Package for CM360"** button, separate from Publish; publishing never packages, and packaging needs no publish |
@@ -187,6 +188,10 @@ crop, anim}] }`.
 
 ### 5.1 Images by DAM delivery URL
 
+> **As built:** generated slices are written to DA at `<page dir>/.<page>/static-N.png` and served by EDS,
+> not uploaded to the DAM. Swapped images still use DAM delivery URLs, and an unapproved one is a warning
+> (`HTML5_ASSET_NOT_DELIVERABLE`), not a job stop.
+
 Every layer image is a DAM asset referenced by its Dynamic Media OpenAPI delivery URL (built from the asset
 ID). The DAM keeps one asset of record, with rights metadata and relations.
 
@@ -310,12 +315,14 @@ size update after preview.
 ```
 <job folder>/output/
   WEB_MED_RECTANGLE_300x250_FAIR-EN-01.jpg            existing (= backup)
-  html5/
-    assets/<size>/static-*.png                        layers referenced by the DA pages
+  html5/cm360/
     WEB_MED_RECTANGLE_300x250_FAIR-EN-01.zip          thumbnail = backup
     WEB_MED_RECTANGLE_300x250_FAIR-EN-01_preview.gif
     WEB_MED_RECTANGLE_300x250_FAIR-EN-01_storyboard.jpg
 ```
+
+> **As built:** packaging outputs go to `output/html5/cm360/`; slices live in DA, not `output/html5/assets/`.
+> Going over budget is a warning, not an error.
 
 * **Metadata on the zip:** size, bytes, budget steps, clickthrough, duration and loops, fidelity score, DA page
   URL, row id, source template.

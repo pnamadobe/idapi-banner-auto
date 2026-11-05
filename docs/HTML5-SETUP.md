@@ -2,6 +2,9 @@
 
 One-time setup so **Generate Banners → HTML5** in AEM Assets View can publish animated HTML5 ads for you.
 
+For how it works (how the INDD is read, how the EDS pages and variations are built, and how CM360 packaging
+works) and the template authoring rules, see [HTML5-HOW-IT-WORKS.md](HTML5-HOW-IT-WORKS.md).
+
 HTML5 banners are published to **your own** Edge Delivery Services (EDS) site, authored in Document Authoring
 (DA). There is no shared or default site. Steps 1–4 create the site once. Step 5 is done in the Generate Banners dialog: when a
 campaign folder has no site yet, it asks for the DA org and site, checks you can write to it, and saves the choice
@@ -123,7 +126,8 @@ your own deployment, create that token yourself and set it in the deployment's e
 secret, so never commit it.
 
 **Check:** after an HTML5 run, click **Package for CM360**. A run appears under
-`https://github.com/<owner>/<repo>/actions`, and the zips land in the campaign's `output/html5` folder in AEM.
+`https://github.com/<owner>/<repo>/actions`, and the zips, GIF previews and storyboards land in the job's `output/html5/cm360` folder in AEM. The modal
+links to that folder in Assets View.
 
 ---
 
@@ -144,5 +148,5 @@ secret, so never commit it.
 | Package for CM360: "GitHub dispatch <owner>/<repo> -> 403/404" or "GITHUB_DISPATCH_TOKEN is not configured" | The dispatch token cannot reach your repo, or `package.yml` is missing | Step 6 |
 | Pages were written to someone else's site | A folder above yours set another site | The dialog shows the site before you run. Click **change** and save your site on the campaign folder |
 
-Still stuck? The design notes in [HTML5-DESIGN.md](HTML5-DESIGN.md) (§11) describe how the site is resolved and
-who the writes run as.
+Still stuck? [HTML5-HOW-IT-WORKS.md](HTML5-HOW-IT-WORKS.md) lists every HTML5 and CM360 issue code. The design
+notes in [HTML5-DESIGN.md](HTML5-DESIGN.md) (§11) describe how the site is resolved and who the writes run as.

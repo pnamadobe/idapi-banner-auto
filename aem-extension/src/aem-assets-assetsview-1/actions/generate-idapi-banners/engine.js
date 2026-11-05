@@ -852,8 +852,8 @@ async function processBatch (params, job, state) {
     }
     if (remapWarnings.length) logger.warn(`remap warnings: ${remapWarnings.join(' | ')}`)
 
-    // 5c. HTML5: slices to AEM (approved, for Dynamic Media delivery), one DA page per size plus the
-    // variations sheet, then an EDS preview. Any JPGs are already written, so every failure only warns.
+    // 5c. HTML5: the variations sheet, the static slices (into DA beside each page) and one DA page per
+    // size, then an EDS preview. Any JPGs are already written, so every failure only warns.
     let html5Result
     if (wantHtml5) {
       try {
