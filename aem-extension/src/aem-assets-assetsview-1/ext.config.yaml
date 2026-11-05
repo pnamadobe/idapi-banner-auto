@@ -99,6 +99,7 @@ runtimeManifest:
             GITHUB_DISPATCH_TOKEN: $GITHUB_DISPATCH_TOKEN
             HTML5_WRITEBACK_SECRET: $HTML5_WRITEBACK_SECRET
             HTML5_WRITEBACK_URL: $HTML5_WRITEBACK_URL
+            ASSETS_VIEW_TENANT: $ASSETS_VIEW_TENANT
           limits:
             timeout: 60000
             memorySize: 256

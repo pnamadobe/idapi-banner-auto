@@ -111,6 +111,7 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
             {pkg.failed ? `, ${pkg.failed} failed` : ''}{pkg.output ? ` → ${pkg.output}` : ''}
           </Text>
         )}
+        {pkg && pkg.outputUrl && (pkg.done > 0 || pkg.status === 'done') && <Text><a href={pkg.outputUrl} target="_blank" rel="noopener noreferrer">Open the CM360 zips in Assets View ↗</a></Text>}
         {pkg && pkg.status === 'stalled' && <Text>⚠ The packaging job stopped without finishing (no progress for 15 minutes). Re-package to run it again.</Text>}
         {pkg && pkg.error && <Text>✖ {pkg.error}</Text>}
         {pkgError && <Text>✖ {pkgError}</Text>}

@@ -10,6 +10,7 @@ const { errorResponse, getBearerToken, stringParameters } = require('./utils')
 const { aemContext, aemDownload, aemApiPath, aemListSafe, jobManifestName, html5SiteFor } = require('./generate-idapi-banners/engine')
 const { classify } = require('./generate-idapi-banners/classify')
 const pkg = require('./generate-idapi-banners/package')
+const { outputUrl } = require('./job-utils')
 
 const TTL = 7 * 24 * 3600
 const MAX_ADS = 200 // keeps the dispatch payload well under GitHub's client_payload limit
@@ -62,9 +63,10 @@ async function main (params) {
       const p = JSON.parse(prev.value)
       const results = p.results || {}
       const failed = Object.values(results).filter((r) => r && r.ok === false).length
+      const output = `${p.outFolder}/html5/cm360`
       return {
         statusCode: 200,
-        body: { jobId, status: isStale(p) ? 'stalled' : p.status, ads: (p.ads || []).length, done: Object.keys(results).length, failed, error: p.error, output: `${p.outFolder}/html5/cm360`, updatedAt: p.updatedAt }
+        body: { jobId, status: isStale(p) ? 'stalled' : p.status, ads: (p.ads || []).length, done: Object.keys(results).length, failed, error: p.error, output, outputUrl: outputUrl({ ...job, outputFolder: output }, params), updatedAt: p.updatedAt }
       }
     }
     if (prev) {
@@ -112,7 +114,7 @@ async function main (params) {
       return errorResponse(502, `could not start packaging: ${e.message}`, logger)
     }
     logger.info(`package ${jobId}: dispatched ${ads.length} ad(s) to ${repo}`)
-    return { statusCode: 202, body: { jobId, status: 'running', ads: ads.length, output: `${outFolder}/html5/cm360` } }
+    return { statusCode: 202, body: { jobId, status: 'running', ads: ads.length, output: `${outFolder}/html5/cm360`, outputUrl: outputUrl({ ...job, outputFolder: `${outFolder}/html5/cm360` }, params) } }
   } catch (e) {
     logger.error(e)
     return errorResponse(500, e.message, logger)
