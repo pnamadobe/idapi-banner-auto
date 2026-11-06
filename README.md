@@ -14,6 +14,12 @@ whole campaign's worth of on-brand banners, rendered on demand.
 > storyboard. No HTML authoring and no second design file. See
 > [HTML5 banners and CM360 zips](#html5-banners-and-cm360-zips).
 
+
+
+https://github.com/user-attachments/assets/b6d38935-702f-40ab-9a3e-344a22d44da4
+
+
+
 > **Works with InDesign (`.indd`) and Photoshop (`.psd`) templates.** Select either in
 > AEM Assets View and click **Generate Banners** — InDesign templates render on the
 > Adobe InDesign API, Photoshop templates on the Adobe Photoshop API (v2). See
