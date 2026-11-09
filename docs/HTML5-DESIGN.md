@@ -188,9 +188,12 @@ crop, anim}] }`.
 
 ### 5.1 Images by DAM delivery URL
 
-> **As built:** generated slices are written to DA at `<page dir>/.<page>/static-N.png` and served by EDS,
-> not uploaded to the DAM. Swapped images still use DAM delivery URLs, and an unapproved one is a warning
-> (`HTML5_ASSET_NOT_DELIVERABLE`), not a job stop.
+> **As built:** generated slices and the variations sheet are written to DA inside `/<template>/<style>/assets/`
+> (`assets/<page>-static-N.png` and `assets/variations.json`) and served by EDS, keeping `/<template>/<style>/`
+> clean with only the banner size pages and one `assets/` subfolder. When generating additional animation styles
+> for a template whose HTML5 pages already exist on the site, the worker reuses the exported geometry and slices
+> directly and skips calling the InDesign API. Swapped images still use DAM delivery URLs, and an unapproved one
+> is a warning (`HTML5_ASSET_NOT_DELIVERABLE`), not a job stop.
 
 Every layer image is a DAM asset referenced by its Dynamic Media OpenAPI delivery URL (built from the asset
 ID). The DAM keeps one asset of record, with rights metadata and relations.

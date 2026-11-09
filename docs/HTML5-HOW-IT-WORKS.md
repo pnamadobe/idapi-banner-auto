@@ -177,8 +177,13 @@ The manifest goes into `result.json` under `html5`, and a diagnostic block goes 
 It then exports `<pagename>_<outputFileName>.jpg` (or `.png`), plus an `.indd` per row or a PDF if those outputs
 are requested.
 
-An HTML5-only run needs no JPG render. In that case the script gets a header-only CSV and only does the export.
-The HTML5 export runs in the first batch only. It needs all rows later, so the full CSV is kept for the sheet.
+An HTML5-only run needs no JPG render. In that case the script gets a header-only CSV, skips staging the
+CSV-swapped hero images, and only exports the static slices and layout manifest. Even better, once a template's
+HTML5 pages and slices have been exported once to your EDS/DA site, generating additional **Animation styles**
+reuses the existing exported geometry and slices directly (`reuseHtml5FromSite`) and skips the InDesign API
+render completely (finishing in a few seconds). If the InDesign API is needed and its cloud queue stays in
+`not_started` for 90 seconds without starting a worker, the job fails fast with an upstream queue message
+instead of waiting for the full 8-minute poll timeout.
 
 ---
 
