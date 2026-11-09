@@ -236,10 +236,10 @@ async function publishHtml5 (ctx) {
     if (e.code === 'HTML5_DA_NO_ACCESS' || e.code === 'HTML5_NO_EDS_SITE') return { pages, warnings }
   }
 
-  // 2. one DA page per html5 size: write its slices into DA in the same folder, then write and preview it.
-  // Slices are new renders, not AEM assets: they go straight into DA alongside the page (`<size>-static-N.png`)
-  // so no per-size subfolder is created, and EDS copies them into the page's media when it previews it.
-  // No AEM approval or Dynamic Media delivery is involved.
+  // 2. one DA page per html5 size: write its slices into the shared `assets/` subfolder, then write and preview it.
+  // Slices are new renders, not AEM assets: they go into `<base>/assets/<size>-static-N.png` so the
+  // style folder stays clean (only the size pages + one `assets/` subfolder), and EDS copies them into
+  // the page's media when it previews it.
   const sized = []
   for (const p of pm) {
     if (p.unknownMotion.length) warn('HTML5_MOTION_UNKNOWN', `${p.pagename}: unknown motion ${p.unknownMotion.join(', ')} (ignored)`)
@@ -253,7 +253,7 @@ async function publishHtml5 (ctx) {
       if (!url) { warn('HTML5_DA_ERROR', `${p.pagename}: slice ${file} missing from render outputs`); continue }
       try {
         const buf = await deps.fetchBuf(url)
-        const daPath = `${paths.base}/${h.slug(p.pagename)}-${file}`
+        const daPath = `${paths.assetsBase}/${h.slug(p.pagename)}-${file}`
         await daPut(cfg, ctx.daToken, daPath, buf, 'image/png')
         uploaded.push({ name: s.name, file, url: contentUrl(cfg, daPath) })
       } catch (e) { warn(e.code || 'HTML5_DA_ERROR', `${p.pagename}/${file}: ${e.message}`) }

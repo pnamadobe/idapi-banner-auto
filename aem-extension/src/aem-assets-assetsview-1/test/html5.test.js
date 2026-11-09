@@ -135,19 +135,20 @@ test('the site comes only from html5.json; campaignPaths', () => {
   expect(() => h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","EDS_REF":"bad ref"}')).toThrow(expect.objectContaining({ code: 'HTML5_NO_SITE' }))
   const p = h.campaignPaths(cfg, 'Spring Sale 2026!')
   expect(p.pagePath('MedRect_300x250')).toBe('/spring-sale-2026/medrect-300x250')
-  expect(p.rowsPath).toBe('/spring-sale-2026/variations.json')
+  expect(p.rowsPath).toBe('/spring-sale-2026/assets/variations.json')
   expect(p.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/spring-sale-2026/medrect-300x250?v=Spring%20A')
 
   // with a template, uses the template name (without extension) instead of the DAM folder name
   const t = h.campaignPaths(cfg, 'automation', 'United Summer.indd')
   expect(t.pagePath('MedRect_300x250')).toBe('/united-summer/medrect-300x250')
-  expect(t.rowsPath).toBe('/united-summer/variations.json')
+  expect(t.rowsPath).toBe('/united-summer/assets/variations.json')
 
-  // only two folder levels in DA: /<template-name>/<animation-style>
+  // only two folder levels in DA: /<template-name>/<animation-style> (plus /assets for supporting files)
   const styled = h.campaignPaths(cfg, 'automation', 'United Summer.indd', 'kinetic')
   expect(styled.base).toBe('/united-summer/kinetic')
+  expect(styled.assetsBase).toBe('/united-summer/kinetic/assets')
   expect(styled.pagePath('MedRect_300x250')).toBe('/united-summer/kinetic/medrect-300x250')
-  expect(styled.rowsPath).toBe('/united-summer/kinetic/variations.json')
+  expect(styled.rowsPath).toBe('/united-summer/kinetic/assets/variations.json')
   expect(styled.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/united-summer/kinetic/medrect-300x250?v=Spring%20A')
 })
 

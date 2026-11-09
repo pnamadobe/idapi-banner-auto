@@ -529,19 +529,22 @@ function siteConfig (text, foundAt) {
   return daConfig(site)
 }
 
-// Paths for a campaign: { base, pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
+// Paths for a campaign: { base, assetsBase, pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
 // Uses the template name (no extension) as the top folder (falling back to campaign when no template
-// is given), and the animationStyle slug as its subfolder: /<template>/<style>/<page>.
+// is given), and the animationStyle slug as its subfolder: /<template>/<style>/<page>. Supporting
+// files (the variations sheet and static PNG slices) live inside /<template>/<style>/assets/.
 function campaignPaths (cfg, campaign, template, animationStyle) {
   const tpl = slug(String(template || '').replace(/\.[^.]+$/, ''))
   const folder = tpl || slug(campaign) || 'campaign'
   const style = animationStyle ? normalizeAnimationStyle(animationStyle) : ''
   const base = `${cfg.root}/${folder}${style ? `/${style}` : ''}`
+  const assetsBase = `${base}/assets`
   return {
     base,
+    assetsBase,
     pagePath: (pagename) => `${base}/${slug(pagename)}`,
-    sheetPath: `${base}/variations`,
-    rowsPath: `${base}/variations.json`,
+    sheetPath: `${assetsBase}/variations`,
+    rowsPath: `${assetsBase}/variations.json`,
     previewUrl: (pagename, row) => `${cfg.previewOrigin}${base}/${slug(pagename)}${row ? `?v=${encodeURIComponent(row)}` : ''}`
   }
 }
