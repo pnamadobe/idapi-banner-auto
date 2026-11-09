@@ -133,7 +133,7 @@ async function main (params) {
         job.html5Folder = html5Folder((checked && checked.template) || job.template)
       }
       if (stale) {
-        if (forced) await state.delete(`${stateKey}-lock`)
+        await state.delete(`${stateKey}-lock`)
         requeue(job)
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)

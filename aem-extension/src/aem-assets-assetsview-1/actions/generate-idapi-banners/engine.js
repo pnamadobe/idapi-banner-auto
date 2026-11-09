@@ -733,19 +733,27 @@ async function processBatch (params, job, state) {
     const firstPage = psd.pagemapNames(csvRecords(pagemapBuf.toString('utf8')))[0] || '' // its JPG becomes each .indd's AEM preview
     const { fromLinks } = await resolveImages(author, folder, templateBuf, plan)
     const aemSource = new Map(c.images.map((im) => [im.name, `${folder}/${im.name}`]))
-    const subfolderImages = new Map(plan.resolved.filter((r) => !aemSource.has(r.staged)).map((r) => [r.staged, r.damPath]))
+    const fullPlan = html5Only && fullVarText !== varText
+      ? await planImages(author, aemToken, folder, c, withoutClickthrough(fullVarText, logger), { allowBareUnresolved: true })
+      : plan
+    const subfolderImages = new Map(fullPlan.resolved.filter((r) => !aemSource.has(r.staged)).map((r) => [r.staged, r.damPath]))
     subfolderImages.forEach((damPath, name) => aemSource.set(name, damPath))
     fromLinks.forEach((l) => aemSource.set(l.name, l.damPath))
-    const imageTasks = [
+    const allImageTasks = [
       ...c.images.map((im) => [im.name, `${folder}/${im.name}`]),
       ...subfolderImages.entries(),
       ...fromLinks.map((l) => [l.name, l.damPath])
     ]
+    // On an HTML5-only run, InDesign renders 0 CSV rows and hides every live CSV-bound image frame
+    // while exporting static slices; swapped images are delivered by Dynamic Media URLs in the DA
+    // sheet instead. Skipping CSV-swapped images avoids staging and C2PA-relinking 100+ MB of hero PNGs.
+    const swappedDamPaths = new Set(fullPlan.resolved.map((r) => r.damPath))
+    const imageTasks = html5Only ? allImageTasks.filter(([, damPath]) => !swappedDamPaths.has(damPath)) : allImageTasks
     staged.push(...(await mapConcurrent(imageTasks, READ_CONCURRENCY, async ([name, damPath]) => ({
       dest: destFor('image', name),
       buf: await aemDownload(author, aemToken, damPath)
     }))))
-    logger.info(`swapped images: ${c.images.length} from folder, ${subfolderImages.size} from subfolders, ${fromLinks.length} from template Asset Links`)
+    logger.info(`swapped images: ${c.images.length} from folder, ${subfolderImages.size} from subfolders, ${fromLinks.length} from template Asset Links (staged ${imageTasks.length})`)
 
     // 2b. fonts: the render box only has what we ship. Gather from a shared org
     // fonts folder (AEM_FONTS_PATH, default /content/dam/fonts) plus an optional
@@ -916,7 +924,7 @@ async function processBatch (params, job, state) {
           pagemapText: pagemapBuf.toString('utf8'),
           csvText: fullVarText,
           slices: html5Slices,
-          imageSource: new Map([...plan.resolved.map((r) => [r.ref, r.damPath]), ...aemSource]),
+          imageSource: new Map([...fullPlan.resolved.map((r) => [r.ref, r.damPath]), ...aemSource]),
           state,
           logger,
           deps: {
