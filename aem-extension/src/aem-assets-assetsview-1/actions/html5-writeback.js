@@ -59,7 +59,6 @@ async function completeOne (author, token, folder, f) {
     body: new URLSearchParams({ fileName: f.name, mimeType: pkg.mimeFor(f.name), uploadToken: f.uploadToken, fileSize: String(f.size) })
   })
   if (!res.ok) throw new Error(`completeUpload ${f.name} -> ${res.status}`)
-  await verifyAemAsset(author, token, `${folder}/${f.name}`)
 }
 
 async function setMetadata (author, token, damPath, properties) {
@@ -100,15 +99,11 @@ async function finishAd (ctx, ad, report) {
   }
   if (items.length) plan.unshift({ onId: zipId, items })
   if (tplId) plan.push({ onId: tplId, items: [{ assetId: zipId, relationType: 'derived' }] })
-  await Promise.all([
-    applyPlan(author, aemToken, plan).then((r) => warnings.push(...(r.warnings || []).map(String))).catch((e) => warnings.push(e.message)),
-    (async () => {
-      try {
-        const thumb = await aemDownload(author, aemToken, ad.backup ? `${rec.jobOutput}/${ad.backup}` : `${ctx.dest}/${story}`)
-        warnings.push(...((await attachPreview(author, aemToken, zipId, thumb)).warnings || []).map(String))
-      } catch (e) { warnings.push(`preview: ${e.message}`) }
-    })()
-  ])
+  try { warnings.push(...((await applyPlan(author, aemToken, plan)).warnings || []).map(String)) } catch (e) { warnings.push(e.message) }
+  try {
+    const thumb = await aemDownload(author, aemToken, ad.backup ? `${rec.jobOutput}/${ad.backup}` : `${ctx.dest}/${story}`)
+    warnings.push(...((await attachPreview(author, aemToken, zipId, thumb)).warnings || []).map(String))
+  } catch (e) { warnings.push(`preview: ${e.message}`) }
   return warnings
 }
 
@@ -144,9 +139,9 @@ async function main (params) {
       case 'initiate': {
         const ad = adAt(rec, params.ad)
         checkFiles(ad, params.files)
-        const first = await initiateOne(author, aemToken, ctx.dest, params.files[0])
-        const rest = await Promise.all(params.files.slice(1).map((f) => initiateOne(author, aemToken, ctx.dest, f)))
-        return { statusCode: 200, body: { files: [first, ...rest] } }
+        const files = []
+        for (const f of params.files) files.push(await initiateOne(author, aemToken, ctx.dest, f))
+        return { statusCode: 200, body: { files } }
       }
       case 'complete': {
         const ad = adAt(rec, params.ad)
@@ -158,7 +153,10 @@ async function main (params) {
           return { statusCode: 200, body: { ok: false } }
         }
         checkFiles(ad, params.files, { needToken: true })
-        await Promise.all(params.files.map((f) => completeOne(author, aemToken, ctx.dest, f)))
+        // Keep completeUpload sequential on the destination folder to avoid Oak folder write conflicts,
+        // then verify readability (HEAD) in parallel.
+        for (const f of params.files) await completeOne(author, aemToken, ctx.dest, f)
+        await Promise.all(params.files.map((f) => verifyAemAsset(author, aemToken, `${ctx.dest}/${f.name}`)))
         const warnings = await finishAd(ctx, ad, report)
         const fid = report.fidelity || {}
         rec.results[params.ad] = {

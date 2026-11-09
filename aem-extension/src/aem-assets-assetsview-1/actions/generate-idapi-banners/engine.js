@@ -241,7 +241,25 @@ async function html5SiteFor (author, aemToken, folder) {
 // Images opened to check size and format: bounded so a big CSV can't stall the start action.
 const PROBE_MAX = 60
 const PROBE_CONCURRENCY = 4
+const READ_CONCURRENCY = 4
 const PROBE_BUDGET_MS = 20000
+
+// Bounded-concurrency helper for read-only AEM GET requests (preserves input order).
+// Never used for file/binary writes (stageInputs / aemUpload), which stay strictly sequential.
+async function mapConcurrent (items, limit, fn) {
+  const list = [...items]
+  const out = new Array(list.length)
+  let next = 0
+  const worker = async () => {
+    while (next < list.length) {
+      const i = next++
+      out[i] = await fn(list[i], i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker))
+  return out
+}
+
 async function probeImages (author, token, resolved) {
   const paths = [...new Set(resolved.map((r) => r.damPath))].slice(0, PROBE_MAX)
   const probes = new Map()
@@ -270,9 +288,12 @@ async function inspectInputs (params) {
     const r = missingInputs(missingMessage(missing, params.template))
     return { variationRows: 0, pageCount: 0, template: c.template ? c.template.name : '', variations: c.variations ? c.variations.name : '', pagemap: c.pagemap ? c.pagemap.name : '', ...r }
   }
-  const templateBuf = await aemDownload(author, aemToken, `${params.folder}/${c.template.name}`)
-  const variationsText = (await aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`)).toString('utf8')
-  const pagemapText = (await aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)).toString('utf8')
+  const [variationsBuf, pagemapBuf] = await Promise.all([
+    aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`),
+    aemDownload(author, aemToken, `${params.folder}/${c.pagemap.name}`)
+  ])
+  const variationsText = variationsBuf.toString('utf8')
+  const pagemapText = pagemapBuf.toString('utf8')
   const known = new Set(c.images.map((i) => i.name))
   const plan = await images.resolveImageRefs({
     folder: params.folder,
@@ -286,7 +307,9 @@ async function inspectInputs (params) {
   })
   if (!isPsd(c.template.name) && plan.unresolved.length) {
     // INDD: a swapped image missing from the folder may still be an AEM link inside the template.
+    // Only download the template binary when there are unresolved bare image names to check.
     try {
+      const templateBuf = await aemDownload(author, aemToken, `${params.folder}/${c.template.name}`)
       const { host } = new URL(author)
       const { unresolved } = resolveSwappedImages(new Set(plan.unresolved.map((u) => u.ref)), [], damLinksFromTemplate(templateBuf), host)
       const still = new Set(unresolved)
@@ -387,6 +410,8 @@ async function imsToken (p) {
 // GET URL; `destination` stays prefix-free so the render's working-folder layout
 // (template/, Document Fonts/, …) is preserved. Returns { assets, files, prefix }
 // so the caller can delete the staged run afterward.
+// Kept strictly sequential: generatePresignURL calls the Adobe I/O Token Vending Machine
+// over HTTP per file, so concurrent writes/presigns risk TVM throttling or stream memory spikes.
 async function stageInputs (staged) {
   const files = await filesLib.init()
   const prefix = `idapi-runs/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -553,19 +578,24 @@ async function renderPsdBatch ({ params, job, logger, author, aemToken, folder, 
   const rows = psd.rowsFromRecords(csvRecords(varText))
   const aemSource = new Map(plan.resolved.map((r) => [r.staged, r.damPath])) // staged name -> DAM path
   const imageDims = new Map()
-  for (const [n, damPath] of aemSource) {
+  const downloadedImages = await mapConcurrent(aemSource, READ_CONCURRENCY, async ([n, damPath]) => {
     const buf = await aemDownload(author, aemToken, damPath)
     const size = psd.imageSize(buf)
     if (size) imageDims.set(n, size)
     else logger.warn(`psd: could not read size of ${n}; it will be fitted, not cover-filled`)
-    staged.push({ dest: destFor('image', n), buf })
-  }
+    return { dest: destFor('image', n), buf }
+  })
+  staged.push(...downloadedImages)
   const fontSources = [params.AEM_FONTS_PATH || '/content/dam/fonts', folder + '/fonts']
   const fontByName = new Map()
   for (const fp of fontSources) {
     for (const e of await aemListSafe(author, aemToken, fp)) if (!e.isFolder && isFont(e.name)) fontByName.set(e.name, fp + '/' + e.name)
   }
-  for (const [fname, fpath] of fontByName) staged.push({ dest: destFor('font', fname), buf: await aemDownload(author, aemToken, fpath) })
+  const downloadedFonts = await mapConcurrent(fontByName, READ_CONCURRENCY, async ([fname, fpath]) => ({
+    dest: destFor('font', fname),
+    buf: await aemDownload(author, aemToken, fpath)
+  }))
+  staged.push(...downloadedFonts)
   logger.info(`psd: ${rows.length} row(s), ${aemSource.size} image(s), ${fontByName.size} font(s)`)
 
   const { assets, files, prefix } = await stageInputs(staged)
@@ -718,9 +748,15 @@ async function processBatch (params, job, state) {
     const subfolderImages = new Map(plan.resolved.filter((r) => !aemSource.has(r.staged)).map((r) => [r.staged, r.damPath]))
     subfolderImages.forEach((damPath, name) => aemSource.set(name, damPath))
     fromLinks.forEach((l) => aemSource.set(l.name, l.damPath))
-    for (const im of c.images) staged.push({ dest: destFor('image', im.name), buf: await aemDownload(author, aemToken, folder + '/' + im.name) })
-    for (const [name, damPath] of subfolderImages) staged.push({ dest: destFor('image', name), buf: await aemDownload(author, aemToken, damPath) })
-    for (const l of fromLinks) staged.push({ dest: destFor('image', l.name), buf: await aemDownload(author, aemToken, l.damPath) })
+    const imageTasks = [
+      ...c.images.map((im) => [im.name, `${folder}/${im.name}`]),
+      ...subfolderImages.entries(),
+      ...fromLinks.map((l) => [l.name, l.damPath])
+    ]
+    staged.push(...(await mapConcurrent(imageTasks, READ_CONCURRENCY, async ([name, damPath]) => ({
+      dest: destFor('image', name),
+      buf: await aemDownload(author, aemToken, damPath)
+    }))))
     logger.info(`swapped images: ${c.images.length} from folder, ${subfolderImages.size} from subfolders, ${fromLinks.length} from template Asset Links`)
 
     // 2b. fonts: the render box only has what we ship. Gather from a shared org
@@ -734,14 +770,16 @@ async function processBatch (params, job, state) {
         if (!e.isFolder && isFont(e.name)) fontByName.set(e.name, fp + '/' + e.name)
       }
     }
-    for (const [fname, fpath] of fontByName) {
-      staged.push({ dest: destFor('font', fname), buf: await aemDownload(author, aemToken, fpath) })
-    }
+    staged.push(...(await mapConcurrent(fontByName, READ_CONCURRENCY, async ([fname, fpath]) => ({
+      dest: destFor('font', fname),
+      buf: await aemDownload(author, aemToken, fpath)
+    }))))
     logger.info(`fonts bundled: ${fontByName.size} (from ${fontSources.join(', ')})`)
 
     // 3. stage to Adobe I/O Files → presigned source URLs
     logger.info(`staging ${staged.length} inputs`)
     const { assets, files, prefix } = await stageInputs(staged)
+    staged.length = 0 // free input buffers once written to Adobe I/O Files
 
     // 4. render on the InDesign API
     logger.info('rendering on the InDesign API')

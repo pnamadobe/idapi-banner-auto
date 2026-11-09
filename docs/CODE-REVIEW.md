@@ -70,10 +70,10 @@
   3. `engine.js:347` (`truncateCsv`) re-implements a quote-aware character loop instead of reusing `csvRecords()` from `./csv.js`.
 - **Remediation:** Refactor `engine.js:truncateCsv` to reuse `csvRecords()`, and align `cloud/run.mjs` and `cloud/aem-render.mjs` with the current contract.
 
-### [ ] 3.3 Sequential Network I/O in `engine.js`
-- **Locations:** `engine.js:378-389` (`stageInputs`), `engine.js:544-556`, `engine.js:709-727`, `engine.js:772-810`
-- **Finding:** Within a single worker batch (600s Runtime limit), all DAM input downloads (`aemDownload`), all Adobe I/O Files writes and presigned URL generations (`stageInputs`), and all output uploads (`aemUpload` + `verifyAemAsset`) execute sequentially in `for...of` loops.
-- **Remediation:** Introduce bounded concurrency (e.g., 4–6 concurrent operations, matching `probeImages` at `engine.js:232`) for input downloads and `stageInputs`.
+### [x] 3.3 Sequential Network I/O in `engine.js`
+- **Locations:** `engine.js:264-295` (`inspectInputs`), `engine.js:378-389` (`stageInputs`), `engine.js:544-556`, `engine.js:709-727`
+- **Finding:** Within a single worker batch (600s Runtime limit), all DAM input downloads (`aemDownload`) executed sequentially, and `inspectInputs()` downloaded the entire `.psd`/`.indd` template binary on every preflight check even when not needed. Meanwhile, file/binary writes (`stageInputs` via Adobe I/O Files TVM and `aemUpload` / `uploadRendition` to AEM JCR/Oak) must remain strictly sequential to avoid TVM rate limits, memory spikes, and AEM JCR/Oak `409 Conflict` errors on parent folder/asset nodes.
+- **Remediation:** Added `mapConcurrent()` (`READ_CONCURRENCY = 4`, matching `probeImages`) for read-only AEM `GET` downloads of images and fonts, made `inspectInputs()` skip downloading the template binary unless an `.indd` has unresolved bare image refs, freed `staged` buffers immediately after `stageInputs()` in `processBatch()`, and kept all file/binary writes (`stageInputs`, `aemUpload`, `completeOne`, `attachPreview`) strictly sequential.
 
 ### [ ] 3.4 ExtendScript `parameters` Escaped-Quote Parsing & `computeRoot()` Order
 - **Locations:**

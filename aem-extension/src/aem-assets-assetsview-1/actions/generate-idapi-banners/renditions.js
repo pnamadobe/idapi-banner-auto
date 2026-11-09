@@ -36,13 +36,14 @@ async function uploadRendition (author, token, assetId, name, buf) {
   if (!done.ok) throw new Error(`complete rendition ${name} -> ${done.status} ${(await done.text()).slice(0, 120)}`)
 }
 
-// Attach the preview image under every standard rendition name in parallel. Returns { created, warnings }.
+// Attach the preview image under every standard rendition name. Kept sequential per asset so
+// concurrent completeUpload calls on the same JCR asset node cannot conflict in AEM Oak.
 async function attachPreview (author, token, assetId, buf, names = RENDITION_NAMES) {
   let created = 0
   const warnings = []
-  await Promise.all(names.map(async (name) => {
+  for (const name of names) {
     try { await uploadRendition(author, token, assetId, name, buf); created++ } catch (e) { warnings.push(e.message) }
-  }))
+  }
   return { created, warnings }
 }
 
