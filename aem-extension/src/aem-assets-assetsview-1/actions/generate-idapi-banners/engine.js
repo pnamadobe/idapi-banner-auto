@@ -23,7 +23,7 @@ const { attachPreview, previewKey } = require('./renditions')
 const { classify } = require('./classify')
 const { csvRecords } = require('./csv')
 const html5 = require('./html5')
-const { publishHtml5, sliceOf } = require('./da')
+const { publishHtml5, sliceOf, reuseHtml5FromSite } = require('./da')
 const { runPreflight, runPsdChecks, missingInputs, summarize, parsePreflightPayload, sanitizeIndFindings, MAX_STORED_FINDINGS } = require('./preflight')
 const { errorResponse, userBearer, stringParameters, checkMissingRequestInputs } = require('../utils')
 
@@ -741,120 +741,148 @@ async function processBatch (params, job, state) {
     const subfolderImages = new Map(fullPlan.resolved.filter((r) => !aemSource.has(r.staged)).map((r) => [r.staged, r.damPath]))
     subfolderImages.forEach((damPath, name) => aemSource.set(name, damPath))
     fromLinks.forEach((l) => aemSource.set(l.name, l.damPath))
-    const allImageTasks = [
-      ...c.images.map((im) => [im.name, `${folder}/${im.name}`]),
-      ...subfolderImages.entries(),
-      ...fromLinks.map((l) => [l.name, l.damPath])
-    ]
-    // On an HTML5-only run, InDesign renders 0 CSV rows and hides every live CSV-bound image frame
-    // while exporting static slices; swapped images are delivered by Dynamic Media URLs in the DA
-    // sheet instead. Skipping CSV-swapped images avoids staging and C2PA-relinking 100+ MB of hero PNGs.
-    const swappedDamPaths = new Set(fullPlan.resolved.map((r) => r.damPath))
-    const imageTasks = html5Only ? allImageTasks.filter(([, damPath]) => !swappedDamPaths.has(damPath)) : allImageTasks
-    staged.push(...(await mapConcurrent(imageTasks, READ_CONCURRENCY, async ([name, damPath]) => ({
-      dest: destFor('image', name),
-      buf: await aemDownload(author, aemToken, damPath)
-    }))))
-    logger.info(`swapped images: ${c.images.length} from folder, ${subfolderImages.size} from subfolders, ${fromLinks.length} from template Asset Links (staged ${imageTasks.length})`)
 
-    // 2b. fonts: the render box only has what we ship. Gather from a shared org
-    // fonts folder (AEM_FONTS_PATH, default /content/dam/fonts) plus an optional
-    // per-job fonts/ subfolder (which overrides shared on name clash), and stage
-    // them into the working folder's "Document Fonts/" for auto-activation.
-    const fontSources = [params.AEM_FONTS_PATH || '/content/dam/fonts', folder + '/fonts']
-    const fontByName = new Map()
-    for (const fp of fontSources) {
-      for (const e of await aemListSafe(author, aemToken, fp)) {
-        if (!e.isFolder && isFont(e.name)) fontByName.set(e.name, fp + '/' + e.name)
-      }
+    // Fast path for HTML5-only runs: when this template's HTML5 pages and slices already exist on the
+    // EDS/DA site (from an earlier run or another animation style), reuse their exported geometry and
+    // static slices directly and skip calling the InDesign API.
+    let cachedHtml5 = null
+    if (html5Only) {
+      try {
+        const cfg = await html5SiteFor(author, aemToken, folder)
+        cachedHtml5 = await reuseHtml5FromSite({
+          cfg,
+          daToken: params.DA_TOKEN || params.daUserToken || '',
+          campaign: folder.split('/').pop(),
+          template: c.template.name,
+          pagemapText: pagemapBuf.toString('utf8')
+        })
+        if (cachedHtml5) logger.info(`html5: reusing ${Object.keys(cachedHtml5.manifest).length} page(s) from ${cachedHtml5.fromBase} (skipping InDesign API render)`)
+      } catch (e) { logger.warn(`html5 reuse check failed: ${e.message}`) }
     }
-    staged.push(...(await mapConcurrent(fontByName, READ_CONCURRENCY, async ([fname, fpath]) => ({
-      dest: destFor('font', fname),
-      buf: await aemDownload(author, aemToken, fpath)
-    }))))
-    logger.info(`fonts bundled: ${fontByName.size} (from ${fontSources.join(', ')})`)
 
-    // 3. stage to Adobe I/O Files → presigned source URLs
-    logger.info(`staging ${staged.length} inputs`)
-    const { assets, files, prefix } = await stageInputs(staged)
-    staged.length = 0 // free input buffers once written to Adobe I/O Files
-
-    // 4. render on the InDesign API
-    logger.info('rendering on the InDesign API')
-    const idTok = await imsToken(params)
-    // writeIndd: also emit an editable .indd per variation (the second modal button)
-    const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
-    const skipImages = writeIndd && /^(1|true|yes)$/i.test(String(params.skipImages || ''))
-    // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
-    // The template checks run once, in the first batch, inside the capability script (needs the re-registered script).
-    const gate = rowOffset === 0 ? { preflightGate: '1', ...(params.preflightOverride === '1' ? { preflightOverride: '1' } : {}) } : {}
-    const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate, ...(wantHtml5 ? { writeHtml5: '1' } : {}) })
-
-    // 5. write outputs back to AEM <folder>/output (unpublished → review)
     const outFolder = (job && job.outputFolder) || folder + '/output'
-    logger.info(`writing ${outputs.length} outputs to ${outFolder}`)
     const written = []
     const remapWarnings = []
     const inddRecords = []   // { name, imageNames } for relations
     const previews = new Map() // variation -> JPG buffer of its first page
-    // result.json (from the script) records each saved INDD's local image links.
     let linkMap = {}
-    const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
     let gateFindings = []
-    let html5Manifest = null
-    let renderDiag = `no result.json (status keys: ${(outputs.statusKeys || []).join(', ') || 'none'})`
-    const html5Slices = new Map() // '<page>/static-N.png' -> rendered output URL
-    if (rj || outputs.data) {
-      try {
-        const resultJson = outputs.data || await (await fetch(rj.url)).json()
-        linkMap = resultJson.links || {}
-        gateFindings = sanitizeIndFindings(resultJson.preflight && resultJson.preflight.findings)
-        html5Manifest = resultJson.html5 || null
-        renderDiag = `result.json keys: ${Object.keys(resultJson).join(', ') || 'none'}`
-      } catch (e) { logger.warn(`result.json unreadable: ${e.message}`); renderDiag = 'result.json unreadable' }
-    }
-    // Names only (never the presigned URLs): what the render handed back, for HTML5 failures.
-    renderDiag += `; ${outputs.length} output(s): ${outputs.map((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]).slice(0, 8).join(', ')}`
-    logger.info(`render returned ${renderDiag}`)
-    for (const f of gateFindings) logger.warn(`preflight ${f.severity} ${f.code}: ${f.message}`)
-    for (const o of outputs) {
-      const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
-      if (name === 'result.json') continue
-      const slice = sliceOf(o.src, o.url)
-      if (slice) { html5Slices.set(`${slice.page}/${slice.file}`, o.url); continue } // published by step 5c
-      if (job && name !== '_run_log.txt' && (job.outputs || []).includes(name)) continue // the log is rewritten every run
-      // Editable-only run: the rendered page images are not delivered. The first page's JPG is still kept in
-      // memory as the .indd's AEM preview (see attachPreview below); every other image is skipped unfetched.
-      if ((skipImages || html5Only) && /\.(jpe?g|png)$/i.test(name)) {
-        const pk = writeIndd && previewKey(name, firstPage)
-        if (pk) previews.set(pk, Buffer.from(await (await fetch(o.url)).arrayBuffer()))
-        continue
-      }
-      let buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
-      const pk = previewKey(name, firstPage)
-      if (pk) previews.set(pk, buf)
-      if (/\.indd$/i.test(name)) {
-        // Restore AEM Asset Link references: the render left swapped images linked to
-        // local staged copies. A failed remap keeps the unremapped INDD rather than the job.
-        // Read the link paths from the INDD itself (authoritative); fall back to the script's record.
-        const dataSource = remapSources([...linksFromIndd(buf), ...(linkMap[name] || [])], aemSource, author)
-        inddRecords.push({ name, imageNames: [...new Set([...linksFromIndd(buf), ...(linkMap[name] || [])].map((l) => l.name).filter((n) => aemSource.has(n)))] })
-        logger.info(`remap ${name}: ${dataSource.length} mapping(s); script recorded ${(linkMap[name] || []).length} link(s)`)
-        if (dataSource.length) {
-          try {
-            const r = await remapLinks(params, idTok, aemToken, files, prefix, name, buf, dataSource)
-            buf = r.buf
-            r.warnings.forEach((w) => remapWarnings.push(`${name}: ${w}`))
-          } catch (e) {
-            logger.warn(`remap-links failed for ${name}: ${e.message}`)
-            remapWarnings.push(`${name}: remap failed (${e.message.slice(0, 200)}); INDD keeps local links`)
-          }
-        } else {
-          remapWarnings.push(`${name}: no swapped-image links recorded; INDD keeps local links`)
+    let html5Manifest = cachedHtml5 ? cachedHtml5.manifest : null
+    let renderDiag = cachedHtml5 ? `reused from ${cachedHtml5.fromBase}` : ''
+    const html5Slices = cachedHtml5 ? cachedHtml5.slices : new Map() // '<page>/static-N.png' -> rendered output URL
+    let fontCount = 0
+    let stagedFiles = null
+    let stagedPrefix = ''
+
+    if (!cachedHtml5) {
+      const allImageTasks = [
+        ...c.images.map((im) => [im.name, `${folder}/${im.name}`]),
+        ...subfolderImages.entries(),
+        ...fromLinks.map((l) => [l.name, l.damPath])
+      ]
+      // On an HTML5-only run, InDesign renders 0 CSV rows and hides every live CSV-bound image frame
+      // while exporting static slices; swapped images are delivered by Dynamic Media URLs in the DA
+      // sheet instead. Skipping CSV-swapped images avoids staging and C2PA-relinking 100+ MB of hero PNGs.
+      const swappedDamPaths = new Set(fullPlan.resolved.map((r) => r.damPath))
+      const imageTasks = html5Only ? allImageTasks.filter(([, damPath]) => !swappedDamPaths.has(damPath)) : allImageTasks
+      staged.push(...(await mapConcurrent(imageTasks, READ_CONCURRENCY, async ([name, damPath]) => ({
+        dest: destFor('image', name),
+        buf: await aemDownload(author, aemToken, damPath)
+      }))))
+      logger.info(`swapped images: ${c.images.length} from folder, ${subfolderImages.size} from subfolders, ${fromLinks.length} from template Asset Links (staged ${imageTasks.length})`)
+
+      // 2b. fonts: the render box only has what we ship. Gather from a shared org
+      // fonts folder (AEM_FONTS_PATH, default /content/dam/fonts) plus an optional
+      // per-job fonts/ subfolder (which overrides shared on name clash), and stage
+      // them into the working folder's "Document Fonts/" for auto-activation.
+      const fontSources = [params.AEM_FONTS_PATH || '/content/dam/fonts', folder + '/fonts']
+      const fontByName = new Map()
+      for (const fp of fontSources) {
+        for (const e of await aemListSafe(author, aemToken, fp)) {
+          if (!e.isFolder && isFont(e.name)) fontByName.set(e.name, fp + '/' + e.name)
         }
       }
-      await aemUpload(author, aemToken, outFolder, name, buf, mimeOf(name))
-      written.push(name)
+      fontCount = fontByName.size
+      staged.push(...(await mapConcurrent(fontByName, READ_CONCURRENCY, async ([fname, fpath]) => ({
+        dest: destFor('font', fname),
+        buf: await aemDownload(author, aemToken, fpath)
+      }))))
+      logger.info(`fonts bundled: ${fontByName.size} (from ${fontSources.join(', ')})`)
+
+      // 3. stage to Adobe I/O Files → presigned source URLs
+      logger.info(`staging ${staged.length} inputs`)
+      const { assets, files, prefix } = await stageInputs(staged)
+      stagedFiles = files
+      stagedPrefix = prefix
+      staged.length = 0 // free input buffers once written to Adobe I/O Files
+
+      // 4. render on the InDesign API
+      logger.info('rendering on the InDesign API')
+      const idTok = await imsToken(params)
+      // writeIndd: also emit an editable .indd per variation (the second modal button)
+      const writeIndd = /^(1|true|yes)$/i.test(String(params.writeIndd || ''))
+      const skipImages = writeIndd && /^(1|true|yes)$/i.test(String(params.skipImages || ''))
+      // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
+      // The template checks run once, in the first batch, inside the capability script (needs the re-registered script).
+      const gate = rowOffset === 0 ? { preflightGate: '1', ...(params.preflightOverride === '1' ? { preflightOverride: '1' } : {}) } : {}
+      const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate, ...(wantHtml5 ? { writeHtml5: '1' } : {}) })
+
+      // 5. write outputs back to AEM <folder>/output (unpublished → review)
+      logger.info(`writing ${outputs.length} outputs to ${outFolder}`)
+      const rj = outputs.find((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0] === 'result.json')
+      renderDiag = `no result.json (status keys: ${(outputs.statusKeys || []).join(', ') || 'none'})`
+      if (rj || outputs.data) {
+        try {
+          const resultJson = outputs.data || await (await fetch(rj.url)).json()
+          linkMap = resultJson.links || {}
+          gateFindings = sanitizeIndFindings(resultJson.preflight && resultJson.preflight.findings)
+          html5Manifest = resultJson.html5 || null
+          renderDiag = `result.json keys: ${Object.keys(resultJson).join(', ') || 'none'}`
+        } catch (e) { logger.warn(`result.json unreadable: ${e.message}`); renderDiag = 'result.json unreadable' }
+      }
+      // Names only (never the presigned URLs): what the render handed back, for HTML5 failures.
+      renderDiag += `; ${outputs.length} output(s): ${outputs.map((o) => String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]).slice(0, 8).join(', ')}`
+      logger.info(`render returned ${renderDiag}`)
+      for (const f of gateFindings) logger.warn(`preflight ${f.severity} ${f.code}: ${f.message}`)
+      for (const o of outputs) {
+        const name = String(o.src || o.url).split(/[\\/]/).pop().split('?')[0]
+        if (name === 'result.json') continue
+        const slice = sliceOf(o.src, o.url)
+        if (slice) { html5Slices.set(`${slice.page}/${slice.file}`, o.url); continue } // published by step 5c
+        if (job && name !== '_run_log.txt' && (job.outputs || []).includes(name)) continue // the log is rewritten every run
+        // Editable-only run: the rendered page images are not delivered. The first page's JPG is still kept in
+        // memory as the .indd's AEM preview (see attachPreview below); every other image is skipped unfetched.
+        if ((skipImages || html5Only) && /\.(jpe?g|png)$/i.test(name)) {
+          const pk = writeIndd && previewKey(name, firstPage)
+          if (pk) previews.set(pk, Buffer.from(await (await fetch(o.url)).arrayBuffer()))
+          continue
+        }
+        let buf = Buffer.from(await (await fetch(o.url)).arrayBuffer())
+        const pk = previewKey(name, firstPage)
+        if (pk) previews.set(pk, buf)
+        if (/\.indd$/i.test(name)) {
+          // Restore AEM Asset Link references: the render left swapped images linked to
+          // local staged copies. A failed remap keeps the unremapped INDD rather than the job.
+          // Read the link paths from the INDD itself (authoritative); fall back to the script's record.
+          const dataSource = remapSources([...linksFromIndd(buf), ...(linkMap[name] || [])], aemSource, author)
+          inddRecords.push({ name, imageNames: [...new Set([...linksFromIndd(buf), ...(linkMap[name] || [])].map((l) => l.name).filter((n) => aemSource.has(n)))] })
+          logger.info(`remap ${name}: ${dataSource.length} mapping(s); script recorded ${(linkMap[name] || []).length} link(s)`)
+          if (dataSource.length) {
+            try {
+              const r = await remapLinks(params, idTok, aemToken, files, prefix, name, buf, dataSource)
+              buf = r.buf
+              r.warnings.forEach((w) => remapWarnings.push(`${name}: ${w}`))
+            } catch (e) {
+              logger.warn(`remap-links failed for ${name}: ${e.message}`)
+              remapWarnings.push(`${name}: remap failed (${e.message.slice(0, 200)}); INDD keeps local links`)
+            }
+          } else {
+            remapWarnings.push(`${name}: no swapped-image links recorded; INDD keeps local links`)
+          }
+        }
+        await aemUpload(author, aemToken, outFolder, name, buf, mimeOf(name))
+        written.push(name)
+      }
     }
     // 5a. AEM cannot thumbnail the generated .indd (the InDesign API embeds no page preview), so attach the
     // first page's rendered JPG as its standard renditions. Failures only warn.
@@ -932,7 +960,13 @@ async function processBatch (params, job, state) {
           deps: {
             upload: (dir, name, buf, mime) => aemUpload(author, aemToken, dir, name, buf, mime),
             assetId: idOf,
-            fetchBuf: async (url) => Buffer.from(await (await fetch(url)).arrayBuffer())
+            fetchBuf: async (url) => {
+              const isDaSource = /^https:\/\/admin\.da\.live\//i.test(url)
+              const tok = isDaSource ? (params.DA_TOKEN || params.daUserToken || '') : ''
+              const res = await fetch(url, tok ? { headers: { Authorization: `Bearer ${tok}` } } : undefined)
+              if (!res.ok) throw new Error(`fetch slice ${url} -> ${res.status}`)
+              return Buffer.from(await res.arrayBuffer())
+            }
           }
         })
         logger.info(`html5: ${html5Result.pages.length} page(s) previewed, ${html5Result.warnings.length} warning(s)`)
@@ -947,7 +981,9 @@ async function processBatch (params, job, state) {
     }
 
     // 6. tidy up the staged inputs — the render is done and outputs are in AEM.
-    try { await files.delete(`${prefix}/`) } catch (e) { logger.warn(`staging cleanup failed: ${e.message}`) }
+    if (stagedFiles && stagedPrefix) {
+      try { await stagedFiles.delete(`${stagedPrefix}/`) } catch (e) { logger.warn(`staging cleanup failed: ${e.message}`) }
+    }
 
     if (state && job) {
       const completed = new Set(job.outputs || [])
@@ -969,7 +1005,7 @@ async function processBatch (params, job, state) {
         outputFolder: outFolder,
         template: c.template.name,
         variations: c.variations.name,
-        fonts: fontByName.size,
+        fonts: fontCount,
         count: written.filter(isDeliverable).length,
         // an HTML5-only run is one batch: 0 rows tells the worker the job is done
         batchRows: html5Only ? 0 : Math.max(0, csvRecords(varText).length - 1),   // records, not lines: quoted cells may contain line breaks (cardname)

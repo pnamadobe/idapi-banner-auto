@@ -323,6 +323,9 @@ function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {}
     if (it.slice) {
       return { name, kind: 'image', source: sliceUrl ? sliceUrl(it) : it.file, image: true, box: boxStr(it.box || { x: 0, y: 0, w: page.width, h: page.height }), motion, style: '' }
     }
+    if (it.rawStyle !== undefined) {
+      return { name, kind: it.kind === 'image' ? 'image' : 'text', source: `{${name}}`, box: boxStr(it.box), motion, style: it.rawStyle }
+    }
     const deg = cssRotation(it.rot)
     const style = [styleTokens(it), deg ? `rotate:${deg}` : ''].filter(Boolean).join(' ')
     return { name, kind: it.kind === 'image' ? 'image' : 'text', source: `{${name}}`, box: boxStr(deg ? unrotateBox(it.box, deg) : it.box), motion, style }
@@ -362,6 +365,56 @@ function readDaPage (html) {
     out[name] = normalizeMotion(cells[4].split('·')[0]) || ''
   }
   return out
+}
+
+// Parse an existing DA or EDS `.ad` page back into a manifest page `{ width, height, slices, elements }`
+// so generating a new animation style can reuse the already-exported geometry, styles, and slice PNGs
+// without calling the InDesign API again.
+function parseAdPage (html, pageUrl = 'https://localhost/') {
+  const block = /<div class="ad">([\s\S]*)<\/div>\s*<\/div>\s*<\/main>/i.exec(String(html || ''))
+  if (!block) return null
+  const text = (s) => String(s || '').replace(/<[^>]*>/g, '').replace(/&#x26;/gi, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim()
+  const rowRe = /<div>((?:\s*<div>[\s\S]*?<\/div>)+)\s*<\/div>/g
+  let width = 0
+  let height = 0
+  const slices = []
+  const elements = []
+  let z = 0
+  let m
+  while ((m = rowRe.exec(block[1]))) {
+    const rawCells = [...m[1].matchAll(/<div>([\s\S]*?)<\/div>/g)].map((c) => c[1])
+    const cells = rawCells.map(text)
+    const name = (cells[0] || '').trim()
+    if (!name) continue
+    if (name.toLowerCase() === 'size') {
+      const sz = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec(cells[1] || '')
+      if (sz) { width = Number(sz[1]); height = Number(sz[2]) }
+      continue
+    }
+    if (cells.length < 4) continue
+    const kind = (cells[1] || '').toLowerCase()
+    const nums = (cells[3] || '').split(/[\s,]+/).filter(Boolean).map(Number)
+    if (nums.length !== 4 || nums.some(Number.isNaN)) continue
+    const box = { x: nums[0], y: nums[1], w: nums[2], h: nums[3] }
+    const imgMatch = /<img\b[^>]*\bsrc=["']([^"']+)["']/i.exec(rawCells[2] || '')
+    if (imgMatch && /^static-\d+$/i.test(name)) {
+      let url = imgMatch[1].replace(/&#x26;/gi, '&').replace(/&amp;/gi, '&')
+      try {
+        const u = new URL(url, pageUrl)
+        if (/\/media_[0-9a-f]+\.png$/i.test(u.pathname)) u.search = ''
+        else if (u.hostname === 'content.da.live') u.hostname = 'admin.da.live', u.pathname = `/source${u.pathname}`
+        url = u.href
+      } catch (e) { /* keep as is */ }
+      slices.push({ name, file: `${name}.png`, z, box, url })
+      z++
+      continue
+    }
+    const styleCell = cells.length >= 6 ? cells[5] : (cells[4] && cells[4].includes('·') ? cells[4].split('·').slice(1).join(' ').trim() : '')
+    elements.push({ label: name, kind: kind === 'image' ? 'image' : 'text', z, box, rawStyle: styleCell || '' })
+    z++
+  }
+  if (!width || !height || (!slices.length && !elements.length)) return null
+  return { width, height, slices, elements }
 }
 
 // The variations CSV without its click-through column(s), for the InDesign/Photoshop render: a link
@@ -509,6 +562,7 @@ module.exports = {
   unrotateBox,
   daPageHtml,
   readDaPage,
+  parseAdPage,
   variationsSheet,
   isClickthroughColumn,
   dropClickthroughColumns,

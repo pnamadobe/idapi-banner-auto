@@ -186,6 +186,37 @@ test('whole-banner animation styles assign distinct choreographies and respect o
   })
 })
 
+test('parseAdPage round-trips an existing DA or EDS page into a reusable manifest page', () => {
+  const layers = h.layersFromManifest(MANIFEST, {
+    sliceUrl: (s) => `https://content.da.live/pnamadobe/banner-ads/cwfall/editorial/${s.name}.png`,
+    animationStyle: 'editorial',
+    duration: 6
+  })
+  const html = h.daPageHtml({ width: 300, height: 250, duration: 6, loops: 1, rowsPath: '/cwfall/editorial/variations.json', layers })
+  const parsed = h.parseAdPage(html, 'https://main--banner-ads--pnamadobe.aem.page/cwfall/editorial/')
+  expect(parsed).toMatchObject({
+    width: 300,
+    height: 250,
+    slices: [
+      { name: 'static-0', z: 0, box: { x: 0, y: 0, w: 300, h: 250 }, url: 'https://admin.da.live/source/pnamadobe/banner-ads/cwfall/editorial/static-0.png' },
+      { name: 'static-1', z: 3, box: { x: 0, y: 0, w: 300, h: 250 }, url: 'https://admin.da.live/source/pnamadobe/banner-ads/cwfall/editorial/static-1.png' }
+    ],
+    elements: [
+      { label: 'hero', kind: 'image', z: 1, box: { x: 0, y: 0, w: 300, h: 250 }, rawStyle: 'focus:50,30' },
+      { label: 'headline', kind: 'text', z: 2, box: { x: 16, y: 150, w: 268, h: 48 }, rawStyle: '"Sans" 22' },
+      { label: 'cta', kind: 'text', z: 4, box: { x: 16, y: 206, w: 120, h: 28 }, rawStyle: 'button' }
+    ]
+  })
+  const restyled = h.layersFromManifest(parsed, { sliceUrl: (s) => `https://content.da.live/pnamadobe/banner-ads/cwfall/wipe/${s.name}.png`, animationStyle: 'wipe', duration: 6 })
+  expect(restyled.map((l) => [l.name, l.motion, l.style])).toEqual([
+    ['static-0', '', ''],
+    ['hero', 'wipe@0/0.6', 'focus:50,30'],
+    ['headline', 'wipe@0.25/0.5', '"Sans" 22'],
+    ['static-1', '', ''],
+    ['cta', 'wipe@0.5/0.5', 'button']
+  ])
+})
+
 test('pagemap without an html5 column opts every page in', () => {
   const text = 'pagenumber,pagename\n1,WEB_LEADERBOARD_1000x320\n2,MedRect_300x250\n'
   expect(h.pagemapHtml5(text).map((p) => p.html5)).toEqual([true, true])

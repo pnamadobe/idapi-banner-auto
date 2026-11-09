@@ -103,6 +103,70 @@ function sliceOf (...srcs) {
 
 const stateKey = (cfg, path) => `html5sheet.${crypto.createHash('sha1').update(`${cfg.org}/${cfg.site}${path}`).digest('hex')}`
 
+function candidateBases (cfg, campaign, template) {
+  const tpl = h.slug(String(template || '').replace(/\.[^.]+$/, ''))
+  const camp = h.slug(campaign) || 'campaign'
+  const out = []
+  const add = (p) => { if (p && !out.includes(p)) out.push(p) }
+  for (const s of h.ANIMATION_STYLES) add(h.campaignPaths(cfg, campaign, template, s.id).base)
+  add(h.campaignPaths(cfg, campaign, template).base)
+  if (tpl) {
+    add(`/ads/${tpl}/${camp}`)
+    for (const s of h.ANIMATION_STYLES) add(`/ads/${tpl}/${camp}/${s.id}`)
+  }
+  add(`/ads/${camp}`)
+  return out
+}
+
+async function fetchExistingPage (cfg, daToken, base, pagename) {
+  const pageSlug = h.slug(pagename)
+  const previewUrl = `${cfg.previewOrigin}${base}/${pageSlug}`
+  try {
+    const res = await fetch(previewUrl)
+    if (res && res.ok && typeof res.text === 'function') {
+      const parsed = h.parseAdPage(await res.text(), previewUrl)
+      if (parsed) return parsed
+    }
+  } catch (e) { /* fall back to DA source */ }
+  if (daToken) {
+    try {
+      const raw = await daGet(cfg, daToken, `${base}/${pageSlug}.html`)
+      if (raw) {
+        const parsed = h.parseAdPage(raw, `${cfg.previewOrigin}${base}/`)
+        if (parsed) return parsed
+      }
+    } catch (e) { /* not at this base */ }
+  }
+  return null
+}
+
+// Check if this template's HTML5 pages + static slices already exist on the EDS/DA site (under any
+// style subfolder or legacy /ads/<template>/<campaign> folder). When all pagemap HTML5 sizes exist,
+// returns { manifest, slices, fromBase } so switching or adding animation styles takes seconds and
+// skips the InDesign API render completely.
+async function reuseHtml5FromSite ({ cfg, daToken, campaign, template, pagemapText }) {
+  const pm = h.pagemapHtml5(pagemapText).filter((p) => p.html5)
+  if (!pm.length) return null
+  for (const base of candidateBases(cfg, campaign, template)) {
+    const first = await fetchExistingPage(cfg, daToken, base, pm[0].pagename)
+    if (!first) continue
+    const rest = await Promise.all(pm.slice(1).map((p) => fetchExistingPage(cfg, daToken, base, p.pagename)))
+    if (rest.some((r) => !r)) continue
+    const all = [first, ...rest]
+    const manifest = {}
+    const slices = new Map()
+    pm.forEach((p, idx) => {
+      const parsed = all[idx]
+      manifest[p.pagename] = parsed
+      for (const s of parsed.slices || []) {
+        if (s.url) slices.set(`${p.pagename}/${s.name}.png`, s.url)
+      }
+    })
+    return { manifest, slices, fromBase: base }
+  }
+  return null
+}
+
 /*
  * ctx: {
  *   cfg (daConfig), daToken, edsToken, edsBearer, author, aemToken, outFolder, folder, campaign,
@@ -213,4 +277,4 @@ async function publishHtml5 (ctx) {
   return { pages, rowsUrl: `${cfg.previewOrigin}${paths.rowsPath}`, warnings }
 }
 
-module.exports = { daGet, daPut, edsPreview, deliveryUrl, isApproved, sliceOf, publishHtml5 }
+module.exports = { daGet, daPut, edsPreview, deliveryUrl, isApproved, sliceOf, publishHtml5, reuseHtml5FromSite }
