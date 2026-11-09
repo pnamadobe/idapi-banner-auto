@@ -23,7 +23,7 @@ jest.mock('../actions/generate-idapi-banners/engine', () => ({
 const { main } = require('../actions/generate-idapi-banners')
 const { keyFor } = require('../actions/job-utils')
 
-const params = (extra) => ({ folder: '/content/dam/x', AEM_DEV_TOKEN: 'token', ...extra })
+const params = (extra) => ({ folder: '/content/dam/x', AEM_DEV_TOKEN: 'token', __ow_headers: { authorization: 'Bearer user-tok' }, ...extra })
 const err = { severity: 'error', code: 'IMG_MISSING', message: 'row 2: hero "nope.jpg" was not found', row: 2, column: 'hero' }
 const warn = { severity: 'warn', code: 'CELL_EMPTY', message: 'row 3: cta is empty', row: 3, column: 'cta' }
 const stored = () => JSON.parse(mockStore.get(keyFor('/content/dam/x', false, '', false)))

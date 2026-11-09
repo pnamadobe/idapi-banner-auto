@@ -27,7 +27,7 @@ For more information on the difference between `aio app run` and `aio app dev`, 
 
 The Generate Banners action is a durable job launcher, not a blocking render request. It stores a seven-day job record in App Builder State and queues `generate-idapi-banners-worker`. Each worker invocation renders at most two CSV rows (configurable with `batchSize`, capped at ten), then queues the next worker before returning. This keeps every activation below Runtime's 600-second limit and means closing the AEM modal does not cancel the job.
 
-`generate-idapi-banners-status` returns durable status by `jobId`. Output names are tracked in state and skipped on retries, so a worker retry does not upload the same output again. Configure `AEM_SC_JSON` (recommended) or `AEM_DEV_TOKEN`; caller browser tokens are not persisted in job state.
+`generate-idapi-banners-status` returns durable status by `jobId`. Output names are tracked in state and skipped on retries, so a worker retry does not upload the same output again. All browser-facing web actions (`generate-idapi-banners`, `generate-idapi-banners-status`, `generate-idapi-banners-package`) require the signed-in user's bearer token and verify read access to the target DAM folder in AEM before running; `generate-idapi-banners-worker` is a non-web action (`web: 'no'`) invoked only over the authenticated OpenWhisk REST API. Configure `AEM_SC_JSON` (recommended) or `AEM_DEV_TOKEN` for background worker execution; caller browser tokens are never persisted in job state.
 
 After each AEM upload completes, the action verifies that the asset is readable
 at its final DAM path before recording the filename in durable state. If the

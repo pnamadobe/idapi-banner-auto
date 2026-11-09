@@ -1,7 +1,7 @@
 const stateLib = require('@adobe/aio-lib-state')
-const { publicJob, outputUrl } = require('./job-utils')
-const { aemContext, aemDownload, jobManifestName } = require('./generate-idapi-banners/engine')
-const { errorResponse } = require('./utils')
+const { publicJob, outputUrl, isDamFolder } = require('./job-utils')
+const { aemContext, aemDownload, jobManifestName, hasFolderAccess } = require('./generate-idapi-banners/engine')
+const { errorResponse, userBearer } = require('./utils')
 
 const staleQueueMs = 45 * 1000
 // A worker is killed at its 10-minute limit; a job still 'running' with no update for longer than the
@@ -22,10 +22,16 @@ async function wakeWorker (jobId) {
 }
 
 exports.main = async (params) => {
+  const callerToken = userBearer(params)
+  if (!callerToken) return errorResponse(401, 'missing Authorization bearer token')
   const jobId = String(params.jobId || '')
   if (jobId && !/^[a-f0-9]{48}$/.test(jobId)) return errorResponse(400, 'invalid jobId')
+  if (params.folder && !isDamFolder(params.folder)) return errorResponse(400, 'folder must be a /content/dam/... path')
   let resolvedJobId = jobId
   if (!resolvedJobId && params.folder) {
+    if (typeof hasFolderAccess === 'function' && !(await hasFolderAccess(params, callerToken, params.folder))) {
+      return errorResponse(403, 'you do not have access to this job folder')
+    }
     try {
       const context = await aemContext(params)
       const manifest = JSON.parse((await aemDownload(context.author, context.aemToken, `${params.folder}/output/${jobManifestName}`)).toString('utf8'))
@@ -39,6 +45,11 @@ exports.main = async (params) => {
   const record = await state.get(`idapi-job-${resolvedJobId}`)
   if (!record) return errorResponse(404, 'job not found')
   const job = JSON.parse(record.value)
+  if (job.folder && typeof hasFolderAccess === 'function') {
+    if (!(await hasFolderAccess({ ...params, aemAuthorUrl: job.aemAuthorUrl || params.aemAuthorUrl }, callerToken, job.folder))) {
+      return errorResponse(403, 'you do not have access to this job folder')
+    }
+  }
   if (job.status === 'queued') {
     const queuedAt = Date.parse(job.queuedAt || job.updatedAt || job.createdAt || '')
     const recoveryAt = Date.parse(job.recoveryAt || '')

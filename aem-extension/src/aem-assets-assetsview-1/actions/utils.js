@@ -99,6 +99,18 @@ function getBearerToken (params) {
   }
   return undefined
 }
+
+/**
+ * Extracts the signed-in user's bearer token from the Authorization header,
+ * falling back to `params.userToken` when a gateway or host path strips the header.
+ *
+ * @param {object} params action input parameters.
+ * @returns {string|undefined}
+ */
+function userBearer (params = {}) {
+  const t = getBearerToken(params) || (typeof params.userToken === 'string' ? params.userToken.trim() : '')
+  return t || undefined
+}
 /**
  *
  * Returns an error response object and attempts to log.info the status code and error message
@@ -130,6 +142,7 @@ function errorResponse (statusCode, message, logger) {
 module.exports = {
   errorResponse,
   getBearerToken,
+  userBearer,
   stringParameters,
   checkMissingRequestInputs
 }

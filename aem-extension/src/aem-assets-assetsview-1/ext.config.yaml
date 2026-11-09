@@ -40,15 +40,14 @@ runtimeManifest:
             timeout: 600000      # 10 min — render + AEM write-back is long-running
             memorySize: 512
           annotations:
-            # We authenticate by *using* the caller's token for AEM (the action
-            # requires the Authorization header). The gateway auth-wrapper
-            # (require-adobe-auth) deploys only __secured_* without the public
-            # sequence in this namespace, which 404s — so validate in-action instead.
+            # Caller authentication and DAM folder access are validated in-action using the
+            # signed-in user's bearer token. The gateway auth-wrapper (require-adobe-auth)
+            # deploys only __secured_* without the public sequence in this namespace, which 404s.
             require-adobe-auth: false
             final: true
         generate-idapi-banners-worker:
           function: actions/generate-idapi-banners-worker.js
-          web: 'yes'
+          web: 'no'
           runtime: nodejs:22
           inputs:
             LOG_LEVEL: debug
@@ -87,6 +86,7 @@ runtimeManifest:
             timeout: 30000
             memorySize: 256
           annotations:
+            require-adobe-auth: false
             final: true
         generate-idapi-banners-package:
           function: actions/generate-idapi-banners-package.js
@@ -104,6 +104,7 @@ runtimeManifest:
             timeout: 60000
             memorySize: 256
           annotations:
+            require-adobe-auth: false
             final: true
         # Called by the banner-ads packaging workflow, which has no Adobe identity; it is
         # authorised by the HMAC writeback token minted by generate-idapi-banners-package.

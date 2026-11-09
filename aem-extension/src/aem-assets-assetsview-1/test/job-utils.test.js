@@ -1,4 +1,4 @@
-const { keyFor, outputMode, publicJob } = require('../actions/job-utils')
+const { keyFor, outputMode, publicJob, isDamFolder } = require('../actions/job-utils')
 
 test('outputMode: html5 mode renders only HTML5 (no flattened images, no editable file)', () => {
   expect(outputMode({ mode: 'html5' })).toEqual({ editable: false, images: false, html5: true })
@@ -37,4 +37,12 @@ describe('publicJob html5Folder', () => {
   test('image jobs do not', () => {
     expect(publicJob({ jobId: 'x', html5Folder: { path: '/ads' } }).html5Folder).toBeUndefined()
   })
+})
+
+test('isDamFolder accepts valid /content/dam/... paths and rejects traversal or non-DAM paths', () => {
+  expect(isDamFolder('/content/dam/acme')).toBe(true)
+  expect(isDamFolder('/content/dam/acme/campaign/')).toBe(true)
+  for (const bad of ['', '/content/dam', '/content/dam/', '/content/dam/../etc', '/content/dam/a/../b', '/etc/passwd', '/content/dam/a\\b']) {
+    expect(isDamFolder(bad)).toBe(false)
+  }
 })

@@ -16,6 +16,13 @@ const outputMode = (params) => {
 }
 // The selected template is a bare file name inside the job folder (it is appended to a DAM path).
 const isTemplateName = (name) => /^[^/\\\x00-\x1f]+\.(indd|psd)$/i.test(String(name || '')) // eslint-disable-line no-control-regex
+// A valid campaign folder path in AEM DAM: under /content/dam/, no traversal segments or control chars.
+const isDamFolder = (folder) => {
+  const s = String(folder || '').replace(/\/+$/, '')
+  if (!/^\/content\/dam\/[^\\\x00-\x1f]+$/.test(s)) return false // eslint-disable-line no-control-regex
+  const segs = s.split('/').slice(3)
+  return segs.length > 0 && segs.every((seg) => seg && seg !== '.' && seg !== '..')
+}
 // Deliverables only (images + editable INDD); excludes _run_log.txt and similar side files.
 const isDeliverable = (name) => /\.(jpe?g|png|indd|psd|pdf)$/i.test(name)
 const publicJob = (job) => ({
@@ -40,4 +47,4 @@ function outputUrl (job, params = {}) {
   return `https://experience.adobe.com/?repoId=${new URL(author).host}#/${tenant}/assets/browse${path}`
 }
 
-module.exports = { keyFor, publicJob, isDeliverable, outputUrl, isTemplateName, outputMode }
+module.exports = { keyFor, publicJob, isDeliverable, outputUrl, isTemplateName, isDamFolder, outputMode }

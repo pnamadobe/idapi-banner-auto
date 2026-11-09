@@ -7,7 +7,9 @@ const mockStore = new Map()
 const mockInspect = jest.fn()
 const mockBatch = jest.fn()
 const mockSite = jest.fn()
+const mockAccess = jest.fn()
 
+jest.mock('@adobe/aio-lib-files', () => ({}))
 jest.mock('@adobe/aio-lib-state', () => ({
   init: async () => ({
     get: async (k) => (mockStore.has(k) ? { value: mockStore.get(k) } : undefined),
@@ -23,6 +25,7 @@ jest.mock('../actions/generate-idapi-banners/engine', () => ({
   resolveOutputFolder: async () => '/content/dam/x/output',
   processBatch: (...args) => mockBatch(...args),
   aemContext: async () => ({ author: 'https://author-p1-e2.adobeaemcloud.com', aemToken: 'aem' }),
+  hasFolderAccess: (...args) => mockAccess(...args),
   html5SiteFor: (...args) => mockSite(...args),
   writeJobManifest: async () => {},
   finalizeRelations: async () => {}
@@ -41,6 +44,7 @@ beforeEach(() => {
   mockStore.clear()
   mockInspect.mockReset().mockResolvedValue({ ok: true, findings: [], template: TEMPLATE })
   mockBatch.mockReset()
+  mockAccess.mockReset().mockResolvedValue(true)
   mockSite.mockReset().mockImplementation(async () => require('../actions/generate-idapi-banners/html5').siteConfig('{"DA_ORG":"acme","DA_SITE":"ads-site"}'))
   process.env.__OW_NAMESPACE = 'ns'
   process.env.__OW_API_KEY = 'key'
@@ -82,10 +86,25 @@ test('the HTML5 job links the folder\'s own site from html5.json', async () => {
   expect(res.body.html5Folder).toEqual({ site: 'acme/ads-site', path: '/ads/hgv-template/x', daUrl: 'https://da.live/#/acme/ads-site/ads/hgv-template/x' })
 })
 
-test('a non-HTML5 start needs no user token and sends none', async () => {
-  const res = await start(params({ mode: 'editable' }))
+test('a non-HTML5 start requires a user token for folder access, but sends none to the worker', async () => {
+  const unauth = await start(params({ mode: 'editable' }))
+  expect(unauth.error.statusCode).toBe(401)
+  const res = await start(params({ mode: 'editable', __ow_headers: { authorization: 'Bearer user-tok' } }))
   expect(res.statusCode).toBe(202)
   expect(Object.keys(JSON.parse(global.fetch.mock.calls[0][1].body))).toEqual(['jobId'])
+})
+
+test('start and status reject callers without access to the job folder (403) or bad folder paths (400)', async () => {
+  const status = require('../actions/generate-idapi-banners-status').main
+  const badFolder = await start(params({ folder: '/etc/passwd', __ow_headers: { authorization: 'Bearer user-tok' } }))
+  expect(badFolder.error.statusCode).toBe(400)
+  mockAccess.mockResolvedValue(false)
+  const denied = await start(params({ mode: 'images', __ow_headers: { authorization: 'Bearer user-tok' } }))
+  expect(denied.error.statusCode).toBe(403)
+  const jobId = 'b'.repeat(48)
+  mockStore.set(`idapi-job-${jobId}`, JSON.stringify({ stateKey: `idapi-job-${jobId}`, jobId, folder: FOLDER, status: 'running' }))
+  expect((await status({ jobId })).error.statusCode).toBe(401)
+  expect((await status({ jobId, __ow_headers: { authorization: 'Bearer user-tok' } })).error.statusCode).toBe(403)
 })
 
 test('the worker fails an HTML5 run that published no page, with the blocking reason', async () => {
@@ -137,7 +156,7 @@ describe('a re-run is not taken by a worker without the user token', () => {
     expect(Date.now() - Date.parse(stored.queuedAt)).toBeLessThan(5000)
     expect(stored.recoveryAt).toBeUndefined()
     expect(global.fetch).toHaveBeenCalledTimes(1) // the start action's own invocation, with the token
-    await status({ jobId })
+    await status({ jobId, __ow_headers: { authorization: 'Bearer user-tok' } })
     expect(global.fetch).toHaveBeenCalledTimes(1)
   })
 
@@ -183,9 +202,23 @@ test('status reports a running job whose worker stopped updating as failed, with
   const old = new Date(Date.now() - 20 * 60 * 1000).toISOString()
   const rec = JSON.stringify({ stateKey: `idapi-job-${jobId}`, jobId, folder: FOLDER, writeHtml5: true, status: 'running', updatedAt: old })
   mockStore.set(`idapi-job-${jobId}`, rec)
-  const r = await status({ jobId })
+  const r = await status({ jobId, __ow_headers: { authorization: 'Bearer user-tok' } })
   expect(r.body).toMatchObject({ status: 'failed', stale: true, error: expect.stringMatching(/Generate again/) })
   expect(mockStore.get(`idapi-job-${jobId}`)).toBe(rec)
   mockStore.set(`idapi-job-${jobId}`, rec.replace(old, new Date().toISOString()))
-  expect((await status({ jobId })).body.status).toBe('running')
+  expect((await status({ jobId, __ow_headers: { authorization: 'Bearer user-tok' } })).body.status).toBe('running')
+})
+
+test('hasFolderAccess verifies HEAD on the AEM folder using the caller token only', async () => {
+  const { hasFolderAccess } = jest.requireActual('../actions/generate-idapi-banners/engine')
+  global.fetch = jest.fn(async () => ({ ok: true }))
+  await expect(hasFolderAccess({ AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com' }, 'caller-tok', '/content/dam/acme/camp')).resolves.toBe(true)
+  expect(global.fetch).toHaveBeenCalledWith(
+    'https://author-p1-e2.adobeaemcloud.com/api/assets/acme/camp.json',
+    { method: 'HEAD', headers: { Authorization: 'Bearer caller-tok' } }
+  )
+  global.fetch = jest.fn(async () => ({ ok: false, status: 403 }))
+  await expect(hasFolderAccess({ AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com' }, 'caller-tok', '/content/dam/acme/camp')).resolves.toBe(false)
+  await expect(hasFolderAccess({ AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com' }, '', '/content/dam/acme/camp')).resolves.toBe(false)
+  await expect(hasFolderAccess({ AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com' }, 'caller-tok', '/content/dam/../etc')).resolves.toBe(false)
 })

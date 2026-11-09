@@ -4,9 +4,9 @@
  */
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
-const { errorResponse, stringParameters, checkMissingRequestInputs, getBearerToken } = require('../utils')
-const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, outputMode } = require('../job-utils')
-const { inspectInputs, resolveOutputFolder, aemContext, html5SiteFor } = require('./engine')
+const { errorResponse, stringParameters, checkMissingRequestInputs, userBearer } = require('../utils')
+const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, isDamFolder, outputMode } = require('../job-utils')
+const { inspectInputs, resolveOutputFolder, aemContext, hasFolderAccess, html5SiteFor } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
 const { campaignPaths } = require('./html5')
 const { saveSite } = require('./site')
@@ -25,25 +25,25 @@ async function invoke (action, payload) {
   if (!response.ok) throw new Error(`queue ${action} -> ${response.status}`)
 }
 
-// The signed-in user's token: the Authorization header, else the userToken the dialog also sends in the
-// body (some host / gateway paths drop the header). Never logged (stringParameters hides it) or stored.
-function userBearer (params) {
-  const t = getBearerToken(params) || (typeof params.userToken === 'string' ? params.userToken.trim() : '')
-  return t || undefined
-}
-
 async function main (params) {
   const publicJob = (job) => ({ ...baseJob(job), outputUrl: outputUrl(job, params) })
   const logger = Core.Logger('main', { level: params.LOG_LEVEL || 'info' })
   try {
     logger.debug(stringParameters(params))
+    const { editable: writeIndd, images: writeImages, html5: writeHtml5 } = outputMode(params)
+    const callerToken = userBearer(params)
+    if (!callerToken) {
+      if (String(params.saveSite || '') === '1') return errorResponse(401, 'sign in again: the site is checked and saved as you', logger)
+      return errorResponse(401, writeHtml5 ? 'HTML5 banners are written to Document Authoring as you: sign in again and retry' : 'Sign in again and retry: missing Authorization bearer token', logger)
+    }
     const missing = checkMissingRequestInputs(params, ['folder'], [])
     if (missing) return errorResponse(400, missing, logger)
+    if (!isDamFolder(params.folder)) return errorResponse(400, 'folder must be a /content/dam/... path', logger)
     // The dialog's site picker: check the DA site as the signed-in user, then save it in html5.json.
     if (String(params.saveSite || '') === '1') {
       try {
         const { author } = await aemContext(params)
-        const saved = await saveSite({ author, userToken: userBearer(params), folder: params.folder, target: params.target, org: params.org, site: params.site })
+        const saved = await saveSite({ author, userToken: callerToken, folder: params.folder, target: params.target, org: params.org, site: params.site })
         return { statusCode: 200, body: saved }
       } catch (e) {
         return errorResponse(e.status || 500, e.message, logger)
@@ -52,6 +52,9 @@ async function main (params) {
     if (!params.AEM_SC_JSON && !params.AEM_DEV_TOKEN) return errorResponse(500, 'AEM_SC_JSON or AEM_DEV_TOKEN must be configured for durable jobs', logger)
     const template = String(params.template || '').trim()
     if (template && !isTemplateName(template)) return errorResponse(400, 'template must be the file name of an .indd or .psd in the folder', logger)
+    if (typeof hasFolderAccess === 'function' && !(await hasFolderAccess(params, callerToken, params.folder))) {
+      return errorResponse(403, 'you do not have access to this job folder', logger)
+    }
     // The estimate also says where HTML5 pages would go (html5Site / html5Path, from the folder's
     // html5.json) or why HTML5 can't run in this folder (html5SiteError).
     if (String(params.preflight || '') === '1') return { statusCode: 200, body: await inspectInputs({ ...params, template }) }
@@ -77,13 +80,11 @@ async function main (params) {
       if (checked) job.findings = checked.findings.slice(0, MAX_STORED_FINDINGS)
     }
     const state = await stateLib.init()
-    const { editable: writeIndd, images: writeImages, html5: writeHtml5 } = outputMode(params)
     if (writeHtml5 && /\.psd$/i.test(template)) return errorResponse(400, 'HTML5 banners need an InDesign template for now', logger)
     // HTML5 pages are written to Document Authoring as the signed-in user (DA does not accept the
     // render service's token). The token is handed to the worker in the invocation only: it is never
     // stored on the job, in state or in AEM. DA_TOKEN, when configured on the worker, overrides it.
-    const daUserToken = writeHtml5 ? userBearer(params) : undefined
-    if (writeHtml5 && !daUserToken) return errorResponse(401, 'HTML5 banners are written to Document Authoring as you: sign in again and retry', logger)
+    const daUserToken = writeHtml5 ? callerToken : undefined
     // Each campaign folder names its own EDS / DA site in html5.json: there is no shared default, so
     // an HTML5 run in a folder without one is refused before anything renders.
     let site = null

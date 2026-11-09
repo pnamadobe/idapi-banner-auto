@@ -402,8 +402,8 @@ https://experience.adobe.com/?devMode=true&ext=<STAGE …adobeio-static.net/inde
 | AEM write-back **"fetch failed …comundefined"** | Direct-binary upload: bare block `PUT` (no `x-ms-blob-type`); build the complete URL as `<folder>.completeUpload.json` yourself. |
 | `aio app init` **"No organizations found"** | `aio logout --force` then `aio login --force`; sign out of Adobe in the browser first and pick the **enterprise** profile. |
 | Extension not visible in Assets View | (1) org-level UI Extensibility toggle not enabled — request in `#dx-ui-extensibility`; (2) not **Published** — approve in Exchange Manage; (3) not enabled per-env in **Extension Manager**; (4) wrong org. |
-| Action URL **404 "resource does not exist"** | `require-adobe-auth: true` deployed only `__secured_*` — set it `false` and validate in-action. |
-| Modal: **`getAccessToken()` times out** | Auth API is unreliable from the modal's `attach()` connection — authenticate in the action via a **Service Credential**, not the browser token. |
+| Action URL **404 "resource does not exist"** | `require-adobe-auth: true` deployed only `__secured_*` — set it `false` and validate in-action (only `generate-idapi-banners-worker` is `web: 'no'`). |
+| Modal: **"Sign in again and retry" / 401** | The modal reads the user's IMS token via `host.auth.getIMSInfo()` (`attach()`) to verify folder access in-action; reload Assets View if the host did not share the session. |
 | AEM **401 "access token invalid/expired"** | A local dev token died with a session change — use a **Service Credential** (Part 4). |
 | AEM **403 `initiateUpload`** on write-back | Tech account lacks DAM write — add it to a DAM-write group (Part 4, step 3). |
 | Stale bundle / empty modal after deploy | `adobeio-static` caches `index.html` — bump the `?v=` cache-buster on the preview URL. |

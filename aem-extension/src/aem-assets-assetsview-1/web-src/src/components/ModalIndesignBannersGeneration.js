@@ -65,7 +65,7 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
   const url = resolveActionUrl('generate-idapi-banners-package');
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
   const call = async (extra) => {
-    const res = await actionWebInvoke(url, headers, { jobId, ...extra });
+    const res = await actionWebInvoke(url, headers, { jobId, ...(token ? { userToken: token } : {}), ...extra });
     if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || `package action returned ${res.statusCode}`);
     return res && res.body ? res.body : res;
   };
@@ -223,23 +223,45 @@ export default function ModalIndesignBannersGeneration() {
   const [html5Run, setHtml5Run] = useState(false);
   const [lastHtml5, setLastHtml5] = useState(null); // last finished HTML5 run with published pages, if any
   const [editSite, setEditSite] = useState(false);
-  const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): DA writes and the package action's folder check
+  const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): authenticates all action calls
+  const authRef = useRef(null);
 
-  useEffect(() => {
-    (async () => {
-      const gc = await attach({ id: extensionId });
-      setGuestConnection(gc);
-      setImsToken(await userToken(gc));
-      try { const t = await gc.host.theme.getThemeInfo(); if (t && t.colorScheme) setColorScheme(t.colorScheme); } catch (e) {}
-    })();
-  }, []);
+  const getToken = async () => {
+    if (guestConnection) {
+      const fresh = await userToken(guestConnection);
+      if (fresh) {
+        if (fresh !== imsToken) setImsToken(fresh);
+        return fresh;
+      }
+    }
+    if (imsToken) return imsToken;
+    if (!authRef.current) {
+      authRef.current = (async () => {
+        const gc = await attach({ id: extensionId });
+        setGuestConnection(gc);
+        try { const t = await gc.host.theme.getThemeInfo(); if (t && t.colorScheme) setColorScheme(t.colorScheme); } catch (e) {}
+        const tok = await userToken(gc);
+        if (tok) setImsToken(tok);
+        return tok;
+      })();
+    }
+    return authRef.current;
+  };
+
+  const invokeAuth = async (url, params) => {
+    const token = await getToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    return actionWebInvoke(url, headers, token ? { ...params, userToken: token } : params);
+  };
+
+  useEffect(() => { getToken(); }, []);
 
   const hasErrors = findings.some((f) => f.severity === 'error');
 
   const inspect = () => {
     const url = resolveActionUrl();
     if (!folder || !url) return Promise.resolve();
-    return actionWebInvoke(url, {}, { folder, template, aemAuthorUrl, preflight: '1' })
+    return invokeAuth(url, { folder, template, aemAuthorUrl, preflight: '1' })
       .then((res) => {
         const body = res && res.body ? res.body : res;
         if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || 'Unable to inspect inputs');
@@ -263,7 +285,7 @@ export default function ModalIndesignBannersGeneration() {
     (async () => {
       try {
         const jobId = await deterministicJobId(folder, 'html5', template);
-        const res = await actionWebInvoke(url, {}, { jobId });
+        const res = await invokeAuth(url, { jobId });
         const body = res && res.body ? res.body : res;
         if (cancelled || !body || !body.writeHtml5 || typeof body.status !== 'string') return;
         const published = body.status === 'completed' && body.html5 && (body.html5.pages || []).length > 0;
@@ -302,7 +324,7 @@ export default function ModalIndesignBannersGeneration() {
     let cancelled = false;
     const check = async () => {
       try {
-        const res = await actionWebInvoke(url, {}, { jobId });
+        const res = await invokeAuth(url, { jobId });
         const body = res && res.body ? res.body : res;
         // A failed job is a normal status reply that carries its own `error`: only a reply with
         // no job status is the status check itself failing.
@@ -355,7 +377,7 @@ export default function ModalIndesignBannersGeneration() {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const res = await actionWebInvoke(url, {}, { jobId });
+        const res = await invokeAuth(url, { jobId });
         const body = res && res.body ? res.body : res;
         if (!cancelled && body && body.status === 'completed') setResult(body);
       } catch (e) { /* the next tick retries */ }
@@ -380,19 +402,14 @@ export default function ModalIndesignBannersGeneration() {
     if (mode === 'html5') params.writeHtml5 = '1';
     setHtml5Run(mode === 'html5');
     if (override && hasErrors) params.preflightOverride = '1';
-    // HTML5 pages are written to Document Authoring as the signed-in user, so send their IMS token.
-    let headers = {};
-    if (mode === 'html5') {
-      const token = (await userToken(guestConnection)) || imsToken;
-      if (!token) {
-        setError('Assets View did not share your sign-in with this dialog. Reload Assets View and try again.');
-        setStatus('html5-confirm');
-        return;
-      }
-      if (token !== imsToken) setImsToken(token);
-      headers = { Authorization: `Bearer ${token}` };
-      params.userToken = token;
+    const token = await getToken();
+    if (!token) {
+      setError('Assets View did not share your sign-in with this dialog. Reload Assets View and try again.');
+      setStatus(mode === 'html5' ? 'html5-confirm' : 'idle');
+      return;
     }
+    const headers = { Authorization: `Bearer ${token}` };
+    params.userToken = token;
     const call = actionWebInvoke(url, headers, params)
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
@@ -524,7 +541,7 @@ export default function ModalIndesignBannersGeneration() {
                 estimate={estimate}
                 folder={folder}
                 aemAuthorUrl={aemAuthorUrl}
-                getToken={async () => { const t = (await userToken(guestConnection)) || imsToken; if (t && t !== imsToken) setImsToken(t); return t; }}
+                getToken={getToken}
                 onSaved={async () => { await inspect(); setEditSite(false); }}
                 onCancel={editSite ? () => setEditSite(false) : null}
               /></>

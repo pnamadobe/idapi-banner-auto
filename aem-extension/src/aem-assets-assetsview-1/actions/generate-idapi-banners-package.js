@@ -6,11 +6,11 @@
 const crypto = require('crypto')
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
-const { errorResponse, getBearerToken, stringParameters } = require('./utils')
-const { aemContext, aemDownload, aemApiPath, aemListSafe, jobManifestName, html5SiteFor } = require('./generate-idapi-banners/engine')
+const { errorResponse, userBearer, stringParameters } = require('./utils')
+const { aemContext, aemDownload, aemListSafe, jobManifestName, html5SiteFor, hasFolderAccess } = require('./generate-idapi-banners/engine')
 const { classify } = require('./generate-idapi-banners/classify')
 const pkg = require('./generate-idapi-banners/package')
-const { outputUrl } = require('./job-utils')
+const { outputUrl, isDamFolder } = require('./job-utils')
 
 const TTL = 7 * 24 * 3600
 const MAX_ADS = 200 // keeps the dispatch payload well under GitHub's client_payload limit
@@ -31,15 +31,19 @@ async function main (params) {
   const logger = Core.Logger('package', { level: params.LOG_LEVEL || 'info' })
   try {
     logger.debug(stringParameters(params))
-    const userToken = getBearerToken(params)
+    const userToken = userBearer(params)
     if (!userToken) return errorResponse(401, 'missing Authorization bearer token', logger)
     if (!params.folder && !params.jobId) return errorResponse(400, 'folder or jobId is required', logger)
+    if (params.folder && !isDamFolder(params.folder)) return errorResponse(400, 'folder must be a /content/dam/... path', logger)
     const jobIdParam = String(params.jobId || '')
     if (jobIdParam && !/^[a-f0-9]{48}$/.test(jobIdParam)) return errorResponse(400, 'invalid jobId', logger)
 
     const { author, aemToken } = await aemContext(params)
     let jobId = jobIdParam
     if (!jobId) {
+      if (typeof hasFolderAccess === 'function' && !(await hasFolderAccess({ ...params, aemAuthorUrl: author }, userToken, params.folder))) {
+        return errorResponse(403, 'you do not have access to this job folder', logger)
+      }
       try {
         jobId = JSON.parse((await aemDownload(author, aemToken, `${params.folder}/output/${jobManifestName}`)).toString('utf8')).jobId
       } catch (e) { return errorResponse(404, `job manifest not found for ${params.folder}`, logger) }
@@ -52,8 +56,9 @@ async function main (params) {
     const jobAuthor = job.aemAuthorUrl || author
 
     // The caller must be able to read the job folder with their own token.
-    const access = await fetch(aemApiPath(jobAuthor, job.folder), { method: 'HEAD', headers: { Authorization: `Bearer ${userToken}` } })
-    if (!access.ok) return errorResponse(403, 'you do not have access to this job folder', logger)
+    if (!(await hasFolderAccess({ ...params, aemAuthorUrl: jobAuthor }, userToken, job.folder))) {
+      return errorResponse(403, 'you do not have access to this job folder', logger)
+    }
 
     const pkgKey = `idapi-pkg-${jobId}`
     const prev = await state.get(pkgKey)

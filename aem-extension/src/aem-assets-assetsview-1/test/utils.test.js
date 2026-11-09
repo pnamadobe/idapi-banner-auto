@@ -108,4 +108,9 @@ describe('getBearerToken', () => {
   test('({ __ow_headers: { authorization: Bearer fake Bearer fake} })', () => {
     expect(utils.getBearerToken({ __ow_headers: { authorization: 'Bearer fake Bearer fake' } })).toEqual('fake Bearer fake')
   })
+  test('userBearer prefers Authorization header and falls back to userToken', () => {
+    expect(utils.userBearer({})).toBeUndefined()
+    expect(utils.userBearer({ userToken: '  body-tok  ' })).toBe('body-tok')
+    expect(utils.userBearer({ userToken: 'body-tok', __ow_headers: { authorization: 'Bearer hdr-tok' } })).toBe('hdr-tok')
+  })
 })

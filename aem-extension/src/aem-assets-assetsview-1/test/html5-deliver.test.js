@@ -111,10 +111,10 @@ test('a failing delivery run is recorded as failed', async () => {
 test('status reports delivery progress on the HTML5 result without the slice list', async () => {
   mockStore.set(key, JSON.stringify(job({ status: 'completed', updatedAt: new Date().toISOString(), html5: { pages: [{ page: 'A' }], warnings: [] } })))
   mockStore.set(dkey, JSON.stringify({ status: 'pending', slices: [B], total: 2, attempt: 1, updatedAt: new Date().toISOString() }))
-  let r = await status({ jobId })
+  let r = await status({ jobId, __ow_headers: { authorization: 'Bearer user-tok' } })
   expect(r.body.html5.delivery).toMatchObject({ status: 'pending', total: 2, remaining: 1 })
   expect(r.body.html5.delivery.slices).toBeUndefined()
   mockStore.set(dkey, JSON.stringify({ status: 'running', slices: [B], total: 2, updatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() }))
-  r = await status({ jobId })
+  r = await status({ jobId, __ow_headers: { authorization: 'Bearer user-tok' } })
   expect(r.body.html5.delivery).toMatchObject({ status: 'failed', error: expect.stringMatching(/Generate again/) })
 })

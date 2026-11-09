@@ -14,7 +14,7 @@ const crypto = require('crypto')
 const filesLib = require('@adobe/aio-lib-files')
 const { Core } = require('@adobe/aio-sdk')
 const { planRelations, assetId, applyPlan } = require('./relations')
-const { isDeliverable } = require('../job-utils')
+const { isDeliverable, isDamFolder } = require('../job-utils')
 const { remapSources, linksFromIndd } = require('./remap')
 const { damLinksFromTemplate, resolveSwappedImages } = require('./links')
 const psd = require('./psd')
@@ -25,7 +25,7 @@ const { csvRecords } = require('./csv')
 const html5 = require('./html5')
 const { publishHtml5, sliceOf } = require('./da')
 const { runPreflight, runPsdChecks, missingInputs, summarize, parsePreflightPayload, sanitizeIndFindings, MAX_STORED_FINDINGS } = require('./preflight')
-const { errorResponse, getBearerToken, stringParameters, checkMissingRequestInputs } = require('../utils')
+const { errorResponse, userBearer, stringParameters, checkMissingRequestInputs } = require('../utils')
 
 // Mint a fresh AEM token from an AEM Service Credential (JWT flow). The whole
 // credential JSON is passed base64-encoded via AEM_SC_JSON. Durable: no manual tokens.
@@ -182,11 +182,7 @@ async function resolveImages (author, folder, templateBuf, plan) {
   if (unresolved.length) throw new Error(`image(s) referenced by the CSV were not found in ${folder}, its subfolders or the template's AEM links: ${unresolved.join(', ')}`)
   return { fromLinks }
 }
-async function aemContext (params) {
-  let aemToken
-  if (params.AEM_SC_JSON) aemToken = await aemTokenFromServiceCredential(params.AEM_SC_JSON)
-  else aemToken = params.AEM_DEV_TOKEN || getBearerToken(params)
-  if (!aemToken) throw new Error('no AEM token')
+function aemAuthor (params = {}) {
   const discoveredAuthor = String(params.aemAuthorUrl || '').replace(/\/+$/, '')
   if (discoveredAuthor && !/^https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com$/i.test(discoveredAuthor)) {
     throw new Error('aemAuthorUrl must be an AEM Cloud author URL')
@@ -194,7 +190,21 @@ async function aemContext (params) {
   const author = discoveredAuthor || String(params.AEM_AUTHOR_URL || '').replace(/\/+$/, '')
   if (!author) throw new Error('AEM_AUTHOR_URL is not configured for this deployment')
   if (!/^https:\/\//i.test(author)) throw new Error('AEM_AUTHOR_URL must be an https URL')
-  return { author, aemToken }
+  return author
+}
+async function aemContext (params) {
+  let aemToken
+  if (params.AEM_SC_JSON) aemToken = await aemTokenFromServiceCredential(params.AEM_SC_JSON)
+  else aemToken = params.AEM_DEV_TOKEN || userBearer(params)
+  if (!aemToken) throw new Error('no AEM token')
+  return { author: aemAuthor(params), aemToken }
+}
+// Verify the signed-in caller can read the target DAM folder with their own token (no service credential used).
+async function hasFolderAccess (params, userToken, folder) {
+  if (!userToken || !isDamFolder(folder)) return false
+  const author = aemAuthor(params)
+  const res = await fetch(aemApiPath(author, folder), { method: 'HEAD', headers: { Authorization: `Bearer ${userToken}` } })
+  return Boolean(res && res.ok)
 }
 // The folders whose html5.json can name a campaign folder's EDS / DA site: the folder itself, then each
 // folder above it up to (not including) /content/dam. The nearest html5.json wins, so one file in a
@@ -978,6 +988,8 @@ exports.processBatch = processBatch
 exports.inspectInputs = inspectInputs
 exports.resolveOutputFolder = resolveOutputFolder
 exports.aemContext = aemContext
+exports.aemAuthor = aemAuthor
+exports.hasFolderAccess = hasFolderAccess
 exports.html5SiteFor = html5SiteFor
 exports.html5SiteLookup = html5SiteLookup
 exports.html5JsonFolders = html5JsonFolders
