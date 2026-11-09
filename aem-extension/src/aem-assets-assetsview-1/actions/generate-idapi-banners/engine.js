@@ -381,19 +381,7 @@ async function writeJobManifest (author, token, folder, manifest) {
 }
 function truncateCsv (text, n, offset = 0) {
   // Keep quoted newlines intact; the JSX CSV reader accepts RFC-4180 records.
-  const records = []
-  let record = ''
-  let quoted = false
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    record += ch
-    if (ch === '"') quoted = text[i + 1] === '"' ? quoted : !quoted
-    if ((ch === '\n' || (ch === '\r' && text[i + 1] !== '\n')) && !quoted) {
-      records.push(record.replace(/\r?\n$/, ''))
-      record = ''
-    }
-  }
-  if (record.trim()) records.push(record)
+  const records = csvRecords(String(text || ''))
   return [records[0] || ''].concat(records.slice(1 + offset, 1 + offset + n)).join('\n') + '\n'
 }
 

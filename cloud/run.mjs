@@ -84,15 +84,19 @@ const CFG = {
     pollTimeoutMs: Number(process.env.POLL_TIMEOUT_MS || 600000),
   },
   storageMode: process.env.STORAGE_MODE || "unset", // unset | adobe | s3 | azure  (see README)
+  format: (process.env.BRAND_FORMAT || "jpg").toLowerCase(),
+  writeIndd: process.env.BRAND_WRITE_INDD ? /^(1|true|yes)$/i.test(process.env.BRAND_WRITE_INDD) : true,
   files: {
-    template: "template/brand-template.indd",
+    template: process.env.BRAND_TEMPLATE || "template/brand-template.indd",
     lockup: "assets/brand/brand-lockup.png",
-    csv: "input/brand-variations.csv",
+    brandDir: "assets/brand",
+    csv: process.env.BRAND_CSV || "input/brand-variations.csv",
+    pagemap: process.env.BRAND_PAGEMAP || "input/brand-pagemap.csv",
     scriptEntry: "scripts/generate_variations.jsx",
     scriptLib: "scripts/brand_lib.jsx",
     shotsDir: "assets/shots",
     docFontsDir: "template/Document Fonts", // InDesign auto-activates fonts placed here
-    extraFontsDir: "assets/fonts",
+    extraFontsDir: "cloud/fonts",
     outputDir: "output",
   },
 };
@@ -155,40 +159,92 @@ function listFiles(rel) {
   return fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => path.join(rel, f));
 }
 
+function firstExisting(candidates) {
+  return candidates.find((c) => c && exists(c)) || candidates[0];
+}
+
+function resolveJobFiles() {
+  const template = firstExisting([
+    CFG.files.template,
+    "template/debranded-template.indd",
+    ...listFiles("template").filter((f) => /\.indd$/i.test(f)),
+  ]);
+  const csv = firstExisting([
+    CFG.files.csv,
+    "input/debranded-variations.csv",
+    ...listFiles("input").filter((f) => /\.csv$/i.test(f) && !/pagemap/i.test(f)),
+    "examples/sample-variations.csv",
+  ]);
+  const pagemap = firstExisting([
+    CFG.files.pagemap,
+    "input/debranded-pagemap.csv",
+    ...listFiles("input").filter((f) => /pagemap/i.test(f) && /\.csv$/i.test(f)),
+    "examples/sample-pagemap.csv",
+  ]);
+  return { template, csv, pagemap };
+}
+
+function loadPageNames(pagemapRel, fallbackSizes) {
+  if (pagemapRel && exists(pagemapRel)) {
+    const pmRows = parseCSV(fs.readFileSync(abs(pagemapRel), "utf8"));
+    const names = pmRows
+      .filter((r) => r.pagenumber && r.pagename)
+      .sort((a, b) => Number(a.pagenumber) - Number(b.pagenumber))
+      .map((r) => r.pagename.trim())
+      .filter(Boolean);
+    if (names.length) return names;
+  }
+  return fallbackSizes;
+}
+
 // Assemble the input asset list (local path + destination path in the job dir).
-function collectInputs(rows, lib) {
+function collectInputs(rows, lib, resolved) {
   const dests = new Set();
   const inputs = [];
-  const add = (rel, { required = true } = {}) => {
-    if (dests.has(rel)) return;
+  const add = (rel, { dest = rel, required = true } = {}) => {
+    if (dests.has(dest)) return;
     if (!exists(rel)) { if (required) die(`missing input: ${rel}`); else return; }
-    dests.add(rel);
-    inputs.push({ local: abs(rel), dest: rel });
+    dests.add(dest);
+    inputs.push({ local: abs(rel), dest });
   };
 
-  add(CFG.files.template);
-  add(CFG.files.lockup);
-  add(CFG.files.csv);
-  add(CFG.files.scriptEntry);
-  add(CFG.files.scriptLib);
+  add(resolved.template, { dest: "template/brand-template.indd", required: false });
+  add(resolved.csv, { dest: "input/brand-variations.csv" });
+  add(resolved.pagemap, { dest: "input/pagemap.csv", required: false });
+  for (const f of listFiles(CFG.files.brandDir).filter((p) => /\.(png|jpe?g)$/i.test(p))) {
+    add(f, { required: false });
+  }
   const resolveShot = (name) => {
     const p1 = `${CFG.files.shotsDir}/${name}`;
     const p2 = `${CFG.files.shotsDir}/square/${name}`;
     return exists(p1) ? p1 : (exists(p2) ? p2 : p1); // mirror the .jsx square/ fallback
   };
-  if (lib.defaultHero) add(resolveShot(lib.defaultHero));
-  for (const r of rows) if (r.hero) add(resolveShot(r.hero));
-  // fonts (optional): auto-activated from Document Fonts, plus any extras
+  if (lib.defaultHero) add(resolveShot(lib.defaultHero), { required: false });
+  for (const r of rows) {
+    for (const v of Object.values(r)) {
+      if (/\.(jpe?g|png)$/i.test(String(v || "").trim())) add(resolveShot(String(v).trim()), { required: false });
+    }
+  }
+  // fonts (optional): auto-activated from Document Fonts, plus any extras in cloud/fonts
   for (const f of listFiles(CFG.files.docFontsDir)) add(f, { required: false });
-  for (const f of listFiles(CFG.files.extraFontsDir)) add(f, { required: false });
+  for (const f of listFiles(CFG.files.extraFontsDir).filter((p) => /\.(otf|ttf|ttc|woff2?)$/i.test(p))) {
+    add(f, { dest: `template/Document Fonts/${path.basename(f)}`, required: false });
+  }
   return inputs;
 }
 
 function computeOutputs(rows, sizes) {
   const out = [];
+  const fmt = CFG.format;
+  const wantPng = fmt === "png" || fmt === "both";
+  const wantJpg = fmt === "jpg" || fmt === "jpeg" || fmt === "both" || (!wantPng);
   rows.forEach((r, idx) => {
     const stem = (r.outputFileName || `row${idx + 1}`).trim();
-    for (const size of sizes) out.push({ dest: `${CFG.files.outputDir}/${size}_${stem}.png` });
+    for (const size of sizes) {
+      if (wantPng) out.push({ dest: `${CFG.files.outputDir}/${size}_${stem}.png` });
+      if (wantJpg) out.push({ dest: `${CFG.files.outputDir}/${size}_${stem}.jpg` });
+    }
+    if (CFG.writeIndd) out.push({ dest: `${CFG.files.outputDir}/${stem}.indd` });
   });
   return out;
 }
@@ -328,21 +384,15 @@ async function makeOutputTarget(_dest) {
   die(`storage output target not wired (STORAGE_MODE=${CFG.storageMode}). See cloud/README.md → "Storage".`);
 }
 
-// Build the custom-script job payload. Shape is illustrative — VERIFY field
-// names/paths against the current InDesign API reference.
-function buildJobPayload(inputAssets, outputAssets) {
+// Build the registered-capability execution payload (VERIFIED /v3/capability contract).
+// Outputs are omitted so the InDesign API writes to its 24h temporary storage and returns presigned URLs.
+function buildJobPayload(inputAssets) {
   return {
-    // each asset: where the service downloads it from + where it lands in the job dir
     assets: inputAssets.map((a) => ({ source: a.source, destination: a.dest })),
-    script: {
-      // the entry script; it #includes scripts/brand_lib.jsx (relative)
-      source: inputAssets.find((a) => a.dest === CFG.files.scriptEntry)?.source,
-      destination: CFG.files.scriptEntry,
+    params: {
+      writeIndd: CFG.writeIndd,
+      writePdf: CFG.writeIndd,
     },
-    // computeRoot() in brand_lib resolves the working dir from the script
-    // location, so no params are strictly required. Passed for clarity/override.
-    params: { projectRoot: "." },
-    outputs: outputAssets.map((o) => ({ destination: o.dest, source: o.target })),
   };
 }
 
@@ -433,12 +483,16 @@ async function submitJob(token, payload) {
 }
 
 async function pollJob(token, job) {
-  const statusUrl = job.statusUrl || job.self || job.links?.status; // VERIFY
+  const statusUrl = job.statusUrl || job.statusUrls || job.self || job.links?.status;
   if (!statusUrl) die("no status URL in submit response — inspect job JSON and adjust pollJob()");
   const started = Date.now();
   for (;;) {
     const res = await fetch(statusUrl, {
-      headers: { Authorization: `Bearer ${token.access_token}`, "x-api-key": CFG.ims.clientId },
+      headers: {
+        Authorization: `Bearer ${token.access_token}`,
+        "x-api-key": CFG.ims.clientId,
+        ...(CFG.ims.orgId ? { "x-gw-ims-org-id": CFG.ims.orgId } : {}),
+      },
     });
     if (!res.ok) die(`poll failed: ${res.status} ${await res.text()}`);
     const s = await res.json();
@@ -517,16 +571,21 @@ async function main() {
   }
 
   const lib = parseLib();
-  const rows = parseCSV(fs.readFileSync(abs(CFG.files.csv), "utf8"));
-  const inputs = collectInputs(rows, lib);
-  const outputs = computeOutputs(rows, lib.sizes);
+  const resolved = resolveJobFiles();
+  const sizes = loadPageNames(resolved.pagemap, lib.sizes);
+  const rows = parseCSV(fs.readFileSync(abs(resolved.csv), "utf8"));
+  const inputs = collectInputs(rows, lib, resolved);
+  const outputs = computeOutputs(rows, sizes);
 
   log(`Brand InDesign banner automation — cloud harness [${MODE}]`);
   log(`project root : ${ROOT}`);
-  log(`sizes (${lib.sizes.length}) : ${lib.sizes.join(", ")}`);
+  log(`template     : ${resolved.template}`);
+  log(`variations   : ${resolved.csv}`);
+  log(`pagemap      : ${resolved.pagemap}`);
+  log(`sizes (${sizes.length}) : ${sizes.join(", ")}`);
   log(`csv rows     : ${rows.length}  (stems: ${rows.map((r) => r.outputFileName).join(", ")})`);
   log(`inputs       : ${inputs.length} files`);
-  log(`outputs      : ${outputs.length} files  (rows × sizes)`);
+  log(`outputs      : ${outputs.length} files  (format=${CFG.format}, writeIndd=${CFG.writeIndd})`);
 
   if (MODE === "dry-run") {
     const dbg = path.join(__dirname, "_dryrun");
@@ -535,10 +594,9 @@ async function main() {
     fs.writeFileSync(path.join(dbg, "outputs.json"), JSON.stringify(outputs, null, 2));
     // illustrative payload with placeholder URLs
     const inAssets = inputs.map((a) => ({ ...a, source: { url: `PLACEHOLDER_UPLOAD/${a.dest}` } }));
-    const outAssets = outputs.map((o) => ({ ...o, target: { url: `PLACEHOLDER_OUTPUT/${o.dest}` } }));
-    fs.writeFileSync(path.join(dbg, "job-payload.json"), JSON.stringify(buildJobPayload(inAssets, outAssets), null, 2));
-    const fontCount = [...listFiles(CFG.files.docFontsDir), ...listFiles(CFG.files.extraFontsDir)].length;
-    log(`fonts bundled: ${fontCount} ${fontCount ? "" : "(⚠ none found — add Source Sans 3 to template/Document Fonts/ for cloud)"}`);
+    fs.writeFileSync(path.join(dbg, "job-payload.json"), JSON.stringify(buildJobPayload(inAssets), null, 2));
+    const fontCount = inputs.filter((i) => i.dest.startsWith("template/Document Fonts/")).length;
+    log(`fonts bundled: ${fontCount} ${fontCount ? "" : "(⚠ none found — add Source Sans 3 to cloud/fonts/ or template/Document Fonts/)"}`);
     log(`\n✓ dry-run wrote cloud/_dryrun/{inputs,outputs,job-payload}.json`);
     log(`  auth creds present: ${CFG.ims.clientId ? "yes" : "no"}  |  storage mode: ${CFG.storageMode}`);
     return;

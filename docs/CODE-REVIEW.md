@@ -59,16 +59,16 @@
 - **Finding:** `publishHtml5()` (`da.js:230-269`) writes static PNG slices directly into Document Authoring (`.<page>/static-N.png`) rather than AEM DAM, and returns `delivery: []`. Because `delivery` is always empty, the follow-up worker mode (`params.deliver = 1`, `deliverHtml5`, `approveWhenProcessed`, `waitDelivered`, `<stateKey>-delivery`, status polling, and UI status messages) is never triggered in production.
 - **Remediation:** Remove the dead `<stateKey>-delivery` state machine and helpers (or repurpose it if auto-approving unapproved swapped DAM images is desired).
 
-### [ ] 3.2 Drift & Duplication Across `scripts/`, `cloud/`, and `aem-extension/`
+### [x] 3.2 Drift & Duplication Across `scripts/`, `cloud/`, and `aem-extension/`
 - **Locations:**
-  - `cloud/run.mjs:117-194, 333-347`
-  - `cloud/aem-render.mjs:79-192`
-  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/engine.js:347-363`
+  - `cloud/run.mjs:87-230, 360-380, 540-575`
+  - `cloud/aem-render.mjs:189-205`
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/engine.js:354-360`
 - **Finding:**
-  1. `cloud/run.mjs` still carries the drift listed in `HANDOFF.md` §7 Task A: `parseLib()` scrapes `var PAGES` from `brand_lib.jsx` instead of using the pagemap CSV, `computeOutputs()` hardcodes `.png` instead of `.jpg`/`.indd`/`.pdf`, `collectInputs()` misses `pagemap.csv` and `overlay_*.png`, and `buildJobPayload()` uses an outdated payload shape.
-  2. `cloud/aem-render.mjs` is an early snapshot of `engine.js` with a naive `truncateCsv()` (`split("\n")`) that breaks on multi-line quoted CSV fields.
-  3. `engine.js:347` (`truncateCsv`) re-implements a quote-aware character loop instead of reusing `csvRecords()` from `./csv.js`.
-- **Remediation:** Refactor `engine.js:truncateCsv` to reuse `csvRecords()`, and align `cloud/run.mjs` and `cloud/aem-render.mjs` with the current contract.
+  1. `cloud/run.mjs` still carried the drift listed in `HANDOFF.md` §7 Task A: `parseLib()` scraped `var PAGES` from `brand_lib.jsx` instead of using the pagemap CSV, `computeOutputs()` hardcoded `.png` instead of `.jpg`/`.indd`, `collectInputs()` missed `pagemap.csv` and `overlay_*.png`, and `buildJobPayload()` used an outdated payload shape.
+  2. `cloud/aem-render.mjs` had a naive `truncateCsv()` (`split("\n")`) that broke on multi-line quoted CSV fields.
+  3. `engine.js:354` (`truncateCsv`) re-implemented a quote-aware character loop instead of reusing `csvRecords()` from `./csv.js`.
+- **Remediation:** Refactored `engine.js:truncateCsv` to reuse `csvRecords()`, made `cloud/aem-render.mjs:truncateCsv` quote-aware, and updated `cloud/run.mjs` to discover the pagemap CSV, brand overlays, fonts in `cloud/fonts`, JPG + INDD outputs, and the verified `/v3/capability` execution payload.
 
 ### [x] 3.3 Sequential Network I/O in `engine.js`
 - **Locations:** `engine.js:264-295` (`inspectInputs`), `engine.js:378-389` (`stageInputs`), `engine.js:544-556`, `engine.js:709-727`

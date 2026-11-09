@@ -187,10 +187,22 @@ function mimeOf(name) {
   if (/\.txt$/i.test(name)) return "text/plain";
   return "application/octet-stream";
 }
-// keep header + first N data lines (rows here are single-line)
-function truncateCsv(text, n) {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n").filter((l) => l.length);
-  return [lines[0]].concat(lines.slice(1, 1 + n)).join("\n") + "\n";
+// Quote-aware CSV record truncation (keeps multiline quoted cells intact).
+function truncateCsv(text, n, offset = 0) {
+  const s = String(text || "");
+  const records = [];
+  let record = "", quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    record += ch;
+    if (ch === '"') quoted = !quoted;
+    if ((ch === "\n" || (ch === "\r" && s[i + 1] !== "\n")) && !quoted) {
+      if (record.replace(/\r?\n$/, "").trim()) records.push(record.replace(/\r?\n$/, ""));
+      record = "";
+    }
+  }
+  if (record.trim()) records.push(record);
+  return [records[0] || ""].concat(records.slice(1 + offset, 1 + offset + n)).join("\n") + "\n";
 }
 
 // ---------------------------------------------------------------------------
