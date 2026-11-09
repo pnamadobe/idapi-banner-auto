@@ -122,7 +122,7 @@ async function main (params) {
       // until the 15-minute lock TTL; once that has passed, treat it as stale and requeue.
       // params.force=1 (operator escape hatch) also drops the worker lock and restarts a running job.
       const forced = job.status === 'running' && /^(1|true|yes)$/i.test(String(params.force || ''))
-      const stale = forced || (job.status === 'running' && Date.now() - Date.parse(job.updatedAt || job.createdAt || '') > 16 * 60 * 1000)
+      const stale = forced || (job.status === 'running' && Date.now() - Date.parse(job.updatedAt || job.createdAt || '') > 11 * 60 * 1000)
       if (!stale && (job.status === 'queued' || job.status === 'running')) return { statusCode: 202, body: publicJob(job) }
       const blocked = await gate()
       if (blocked) return blocked

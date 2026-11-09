@@ -35,7 +35,7 @@ test('safeName allows bare file names only', () => {
 test('buildAds crosses html5 sizes with rows and finds backups', () => {
   const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, outputs: ['MedRect_300x250_Spring.jpg'], cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale' })
   expect(ads.map((a) => a.name)).toEqual(['MedRect_300x250_Spring', 'MedRect_300x250_Summer', 'Half_300x600_Spring', 'Half_300x600_Summer'])
-  expect(ads[0]).toEqual({ page: 'MedRect_300x250', path: '/ads/spring-sale/medrect-300x250', row: 'Spring', budgetKB: 120, name: 'MedRect_300x250_Spring', backup: 'MedRect_300x250_Spring.jpg' })
+  expect(ads[0]).toEqual({ page: 'MedRect_300x250', path: '/spring-sale/medrect-300x250', row: 'Spring', budgetKB: 120, name: 'MedRect_300x250_Spring', backup: 'MedRect_300x250_Spring.jpg' })
   expect(ads[1].backup).toBeUndefined()
   expect(ads[2].budgetKB).toBe(150)
 })
@@ -45,11 +45,11 @@ test('buildAds narrows by pages and rows', () => {
   expect(ads.map((a) => a.name)).toEqual(['Half_300x600_Summer'])
 })
 
-test('buildAds puts ads under the template sub-folder', () => {
+test('buildAds puts ads under /<template>/<animationStyle>', () => {
   const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale', template: 'United Summer.indd', pages: ['Half_300x600'], rows: ['Summer'] })
-  expect(ads[0].path).toBe('/ads/united-summer/spring-sale/half-300x600')
+  expect(ads[0].path).toBe('/united-summer/half-300x600')
   const styled = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale', template: 'United Summer.indd', animationStyle: 'retail', pages: ['Half_300x600'], rows: ['Summer'] })
-  expect(styled[0].path).toBe('/ads/united-summer/spring-sale/retail/half-300x600')
+  expect(styled[0].path).toBe('/united-summer/retail/half-300x600')
 })
 
 test('expectedNames and mimeFor', () => {

@@ -172,9 +172,9 @@ async function publishHtml5 (ctx) {
     if (e.code === 'HTML5_DA_NO_ACCESS' || e.code === 'HTML5_NO_EDS_SITE') return { pages, warnings }
   }
 
-  // 2. one DA page per html5 size: write its slices into DA next to the page, then write and preview it.
-  // Slices are new renders, not AEM assets: they go straight into DA (the `.<page>` folder, as da.live
-  // stores an image dropped into a page) and EDS copies them into the page's media when it previews it.
+  // 2. one DA page per html5 size: write its slices into DA in the same folder, then write and preview it.
+  // Slices are new renders, not AEM assets: they go straight into DA alongside the page (`<size>-static-N.png`)
+  // so no per-size subfolder is created, and EDS copies them into the page's media when it previews it.
   // No AEM approval or Dynamic Media delivery is involved.
   const sized = []
   for (const p of pm) {
@@ -182,7 +182,6 @@ async function publishHtml5 (ctx) {
     if (p.tooLong) warn('HTML5_TOO_LONG', `${p.pagename}: duration x loops is over 30 s; the block caps it`)
     const page = manifest[p.pagename]
     if (!page) { warn('HTML5_NO_PAGES', `${p.pagename}: the render produced no HTML5 layers (is the page in the template?)`); continue }
-    const mediaDir = `${paths.base}/.${h.slug(p.pagename)}`
     const uploaded = []
     for (const s of page.slices || []) {
       const file = `${s.name}.png`
@@ -190,7 +189,7 @@ async function publishHtml5 (ctx) {
       if (!url) { warn('HTML5_DA_ERROR', `${p.pagename}: slice ${file} missing from render outputs`); continue }
       try {
         const buf = await deps.fetchBuf(url)
-        const daPath = `${mediaDir}/${file}`
+        const daPath = `${paths.base}/${h.slug(p.pagename)}-${file}`
         await daPut(cfg, ctx.daToken, daPath, buf, 'image/png')
         uploaded.push({ name: s.name, file, url: contentUrl(cfg, daPath) })
       } catch (e) { warn(e.code || 'HTML5_DA_ERROR', `${p.pagename}/${file}: ${e.message}`) }

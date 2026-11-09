@@ -83,11 +83,11 @@ test('an HTML5 start in a folder without html5.json is refused with 422', async 
 test('the HTML5 job links the folder\'s own site from html5.json', async () => {
   const res = await start(params({ __ow_headers: { authorization: 'Bearer user-tok' } }))
   expect(mockSite).toHaveBeenCalledWith('https://author-p1-e2.adobeaemcloud.com', 'aem', FOLDER)
-  expect(res.body.html5Folder).toEqual({ site: 'acme/ads-site', path: '/ads/hgv-template/x/editorial', daUrl: 'https://da.live/#/acme/ads-site/ads/hgv-template/x/editorial', animationStyle: 'editorial' })
+  expect(res.body.html5Folder).toEqual({ site: 'acme/ads-site', path: '/hgv-template/editorial', daUrl: 'https://da.live/#/acme/ads-site/hgv-template/editorial', animationStyle: 'editorial' })
 
   mockStore.clear()
   const kinetic = await start(params({ animationStyle: 'kinetic', __ow_headers: { authorization: 'Bearer user-tok' } }))
-  expect(kinetic.body.html5Folder).toEqual({ site: 'acme/ads-site', path: '/ads/hgv-template/x/kinetic', daUrl: 'https://da.live/#/acme/ads-site/ads/hgv-template/x/kinetic', animationStyle: 'kinetic' })
+  expect(kinetic.body.html5Folder).toEqual({ site: 'acme/ads-site', path: '/hgv-template/kinetic', daUrl: 'https://da.live/#/acme/ads-site/hgv-template/kinetic', animationStyle: 'kinetic' })
 })
 
 test('a non-HTML5 start requires a user token for folder access, but sends none to the worker', async () => {

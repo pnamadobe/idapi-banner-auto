@@ -120,7 +120,7 @@ test('variationsSheet resolves images but leaves clickthrough alone', () => {
 
 test('the site comes only from html5.json; campaignPaths', () => {
   const cfg = h.siteConfig('{"DA_ORG": "teammate", "DA_SITE": "Banner-Ads"}')
-  expect(cfg).toMatchObject({ org: 'teammate', site: 'banner-ads', root: '/ads', ref: 'main', repo: 'teammate/banner-ads', previewOrigin: 'https://main--banner-ads--teammate.aem.page' })
+  expect(cfg).toMatchObject({ org: 'teammate', site: 'banner-ads', root: '', ref: 'main', repo: 'teammate/banner-ads', previewOrigin: 'https://main--banner-ads--teammate.aem.page' })
   expect(h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","DA_ADS_ROOT":"/banners/","EDS_REF":"dev","GITHUB_REPO":"Owner/pkg.repo"}')).toMatchObject({ root: '/banners', ref: 'dev', repo: 'Owner/pkg.repo' })
   // no deployment default: a missing, empty or incomplete html5.json is HTML5_NO_SITE
   for (const text of [null, '', '  ', '{}', '{"DA_ORG":"a"}', '{"DA_SITE":"b"}']) {
@@ -134,21 +134,21 @@ test('the site comes only from html5.json; campaignPaths', () => {
   expect(() => h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","GITHUB_REPO":"x"}')).toThrow(/GITHUB_REPO/)
   expect(() => h.siteConfig('{"DA_ORG":"a","DA_SITE":"b","EDS_REF":"bad ref"}')).toThrow(expect.objectContaining({ code: 'HTML5_NO_SITE' }))
   const p = h.campaignPaths(cfg, 'Spring Sale 2026!')
-  expect(p.pagePath('MedRect_300x250')).toBe('/ads/spring-sale-2026/medrect-300x250')
-  expect(p.rowsPath).toBe('/ads/spring-sale-2026/variations.json')
-  expect(p.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/ads/spring-sale-2026/medrect-300x250?v=Spring%20A')
+  expect(p.pagePath('MedRect_300x250')).toBe('/spring-sale-2026/medrect-300x250')
+  expect(p.rowsPath).toBe('/spring-sale-2026/variations.json')
+  expect(p.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/spring-sale-2026/medrect-300x250?v=Spring%20A')
 
-  // a sub-folder per template (the .indd name without its extension)
-  const t = h.campaignPaths(cfg, 'Spring Sale 2026!', 'United Summer.indd')
-  expect(t.pagePath('MedRect_300x250')).toBe('/ads/united-summer/spring-sale-2026/medrect-300x250')
-  expect(t.rowsPath).toBe('/ads/united-summer/spring-sale-2026/variations.json')
+  // with a template, uses the template name (without extension) instead of the DAM folder name
+  const t = h.campaignPaths(cfg, 'automation', 'United Summer.indd')
+  expect(t.pagePath('MedRect_300x250')).toBe('/united-summer/medrect-300x250')
+  expect(t.rowsPath).toBe('/united-summer/variations.json')
 
-  // a sub-folder per animation style under the campaign
-  const styled = h.campaignPaths(cfg, 'Spring Sale 2026!', 'United Summer.indd', 'kinetic')
-  expect(styled.base).toBe('/ads/united-summer/spring-sale-2026/kinetic')
-  expect(styled.pagePath('MedRect_300x250')).toBe('/ads/united-summer/spring-sale-2026/kinetic/medrect-300x250')
-  expect(styled.rowsPath).toBe('/ads/united-summer/spring-sale-2026/kinetic/variations.json')
-  expect(styled.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/ads/united-summer/spring-sale-2026/kinetic/medrect-300x250?v=Spring%20A')
+  // only two folder levels in DA: /<template-name>/<animation-style>
+  const styled = h.campaignPaths(cfg, 'automation', 'United Summer.indd', 'kinetic')
+  expect(styled.base).toBe('/united-summer/kinetic')
+  expect(styled.pagePath('MedRect_300x250')).toBe('/united-summer/kinetic/medrect-300x250')
+  expect(styled.rowsPath).toBe('/united-summer/kinetic/variations.json')
+  expect(styled.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/united-summer/kinetic/medrect-300x250?v=Spring%20A')
 })
 
 test('whole-banner animation styles assign distinct choreographies and respect overrides', () => {

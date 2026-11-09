@@ -252,7 +252,7 @@ layers. That is one page per size, not sizes × rows, so a layout fix applies to
 
   The syntax is `preset[@delay][/duration]`. In the Generate HTML5 banners modal, authors can also pick a
   whole-banner **Animation style** (`editorial` default, `luxury`, `kinetic`, `retail`, `wipe`, `minimal`), which
-  publishes into `/ads/<template>/<campaign>/<style>` and pre-populates each layer's motion cell according to
+  publishes into `/<template>/<style>` and pre-populates each layer's motion cell according to
   that style's choreography (unless overridden by the pagemap `motion` column or in DA);
 * has two modes: `?v=` for preview, and `?export=cm360` for packaging. Export mode adds `ad.size` and `clickTag`,
   wraps the stage in the click-through anchor, and loads no page chrome, RUM or other external scripts;

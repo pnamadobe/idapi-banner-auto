@@ -7,7 +7,7 @@ const staleQueueMs = 45 * 1000
 // A worker is killed at its 10-minute limit; a job still 'running' with no update for longer than the
 // start action's stale window has lost its worker. Report it as failed (the record is left alone) so
 // the dialog stops waiting, and the next Generate click restarts it.
-const staleRunMs = 16 * 60 * 1000
+const staleRunMs = 11 * 60 * 1000
 
 async function wakeWorker (jobId) {
   const namespace = process.env.__OW_NAMESPACE

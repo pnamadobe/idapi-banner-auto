@@ -444,7 +444,7 @@ function findPreflightText (v, depth = 0) {
   return ''
 }
 async function indesignPoll (p, tok, statusUrl) {
-  for (let n = 0; n < 200; n++) {
+  for (let n = 0; n < 120; n++) {
     await new Promise((r) => setTimeout(r, 4000))
     const s = await (await fetch(statusUrl, { headers: idH(p, tok) })).json()
     const st = (s.status || '').toLowerCase()

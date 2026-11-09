@@ -32,13 +32,13 @@ see [HTML5-DESIGN.md](HTML5-DESIGN.md). For the InDesign API, AEM and extension 
         │
         │  publishHtml5 (as the signed-in user)
         ▼
- Document Authoring (da.live)  <org>/<site>/ads/<template>/<campaign>/<style>/
-   variations.json  (the CSV as a DA sheet, image cells = Dynamic Media delivery URLs)
-   <page>           (one page per html5 size, holding an `ad` block)
-   .<page>/static-N.png  (the slices)
+ Document Authoring (da.live)  <org>/<site>/<template>/<style>/
+   variations.json        (the CSV as a DA sheet, image cells = Dynamic Media delivery URLs)
+   <page>                 (one page per html5 size, holding an `ad` block)
+   <page>-static-N.png    (the slices, alongside the pages — no per-size subfolders)
         │  EDS preview
         ▼
- https://main--<site>--<org>.aem.page/ads/<template>/<campaign>/<style>/<page>?v=<row>
+ https://main--<site>--<org>.aem.page/<template>/<style>/<page>?v=<row>
         │
         │  Package for CM360 (repository_dispatch → GitHub Actions in your site repo)
         ▼
@@ -112,7 +112,7 @@ Motion presets: `none`, `fade`, `fadeUp`, `fadeDown`, `slideLeft`, `slideRight`,
 
 On the **HTML5 banners** confirmation screen (after the DA org and site are confirmed), the **Animation style**
 dropdown chooses a choreography for every layer that has no explicit pagemap or DA-authored motion, and
-publishes into a subfolder named after the style (`/ads/<template>/<campaign>/<style>`):
+publishes into `/<template>/<style>`:
 
 | Style (`id`) | Dropdown label | Choreography |
 |---|---|---|
@@ -187,16 +187,17 @@ The HTML5 export runs in the first batch only. It needs all rows later, so the f
 After the render, the action publishes to the DA org and site named by the nearest `html5.json`. Every write
 runs as the user who clicked Generate, unless the deployment sets service tokens.
 
-Content goes under `<DA_ADS_ROOT>/<template>/<campaign>/<style>` (default root `/ads`; template and campaign are the
-slugged names of the template file and the campaign folder, and `<style>` is the animation style chosen in the
-Generate HTML5 banners modal: `editorial`, `luxury`, `kinetic`, `retail`, `wipe` or `minimal`):
+Content goes under `/<template>/<style>` (or `<DA_ADS_ROOT>/<template>/<style>` when `DA_ADS_ROOT` is set in
+`html5.json`; `<template>` is the slugged name of the template file and `<style>` is the animation style chosen in
+the Generate HTML5 banners modal: `editorial`, `luxury`, `kinetic`, `retail`, `wipe` or `minimal`):
 
 1. **The variations sheet** (`variations.json`). The full CSV is written as a DA sheet. Cells that name an image
    are replaced with that asset's **Dynamic Media delivery URL**. An image that is not approved gets the warning
    `HTML5_ASSET_NOT_DELIVERABLE`.
    * If an author has edited the sheet in DA since the last run, the sheet is **kept** and you get
      `HTML5_SHEET_EDITED`. To reset it, delete the sheet in DA and run again.
-2. **The slices** go beside each page, at `.<page>/static-N.png`, and are served by EDS.
+2. **The slices** go right inside `/<template>/<style>/` as `<page>-static-N.png` (no per-size subfolders) and
+   are served by EDS.
 3. **One page per html5 size** (`<page>`, the slugged page name). Each holds an `ad` block. If the page already
    exists, its motion cells are read first, so author edits to motion are kept. Layout (boxes, z order, styles)
    always comes from the INDD.

@@ -442,16 +442,18 @@ function textConfig (site) {
 function daConfig (site = {}) {
   const pick = (k, d) => String(site[k] || d || '').trim()
   if (!pick('DA_ORG') || !pick('DA_SITE')) throw noSite(NO_SITE)
+  const rawRoot = pick('DA_ADS_ROOT', '')
+  const trimmedRoot = rawRoot.replace(/^\/+|\/+$/g, '')
   const cfg = {
     org: pick('DA_ORG'),
     site: pick('DA_SITE'),
-    root: '/' + pick('DA_ADS_ROOT', '/ads').replace(/^\/+|\/+$/g, ''),
+    root: trimmedRoot ? `/${trimmedRoot}` : '',
     ref: pick('EDS_REF', 'main')
   }
   for (const [k, name] of [['org', 'DA_ORG'], ['site', 'DA_SITE'], ['ref', 'EDS_REF']]) {
     if (!SEG.test(cfg[k])) throw noSite(`html5.json: ${name} ${shown(cfg[k])} is not a valid name`)
   }
-  if (!/^(\/[a-z0-9][a-z0-9-]*)+$/i.test(cfg.root)) throw noSite(`html5.json: DA_ADS_ROOT ${shown(cfg.root)} is not a valid path`)
+  if (cfg.root && !/^(\/[a-z0-9][a-z0-9-]*)+$/i.test(cfg.root)) throw noSite(`html5.json: DA_ADS_ROOT ${shown(rawRoot)} is not a valid path`)
   cfg.org = cfg.org.toLowerCase()
   cfg.site = cfg.site.toLowerCase()
   cfg.root = cfg.root.toLowerCase()
@@ -474,13 +476,14 @@ function siteConfig (text, foundAt) {
   return daConfig(site)
 }
 
-// Paths for a campaign: { pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
-// With a template, its file name (no extension) is a folder above the campaign: /ads/<template>/<campaign>/...
-// With an animationStyle, its slug is a subfolder inside the campaign: /ads/<template>/<campaign>/<style>/...
+// Paths for a campaign: { base, pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
+// Uses the template name (no extension) as the top folder (falling back to campaign when no template
+// is given), and the animationStyle slug as its subfolder: /<template>/<style>/<page>.
 function campaignPaths (cfg, campaign, template, animationStyle) {
   const tpl = slug(String(template || '').replace(/\.[^.]+$/, ''))
+  const folder = tpl || slug(campaign) || 'campaign'
   const style = animationStyle ? normalizeAnimationStyle(animationStyle) : ''
-  const base = `${cfg.root}${tpl ? `/${tpl}` : ''}/${slug(campaign) || 'campaign'}${style ? `/${style}` : ''}`
+  const base = `${cfg.root}/${folder}${style ? `/${style}` : ''}`
   return {
     base,
     pagePath: (pagename) => `${base}/${slug(pagename)}`,
