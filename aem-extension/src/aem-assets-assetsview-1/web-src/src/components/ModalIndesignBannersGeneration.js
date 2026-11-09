@@ -443,13 +443,11 @@ export default function ModalIndesignBannersGeneration() {
         {!folder && (
           <Flex direction="column" gap="size-150">
             <Text>Couldn't determine the job folder from your selection. Select a template (<code>.indd</code> or <code>.psd</code>) inside a job folder and try again.</Text>
-            <Text>Debug (what the extension received):</Text>
-            <View backgroundColor="gray-100" padding="size-150" borderRadius="regular" maxHeight="size-3000" overflow="auto">
-              <Text><b>assetPath:</b> {String(job.assetPath)}</Text><br/>
-              <Text><b>count:</b> {String(job.count)}</Text><br/>
-              <Text><b>resourceSelection:</b> {String(job.rawSelection).slice(0, 1500)}</Text><br/>
-              <Text><b>context:</b> {String(job.rawContext).slice(0, 600)}</Text>
-            </View>
+            {job.assetPath && (
+              <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+                <Text><b>Selected path:</b> {String(job.assetPath)}</Text>
+              </View>
+            )}
             <ButtonGroup><Button variant="primary" onPress={close}>Close</Button></ButtonGroup>
           </Flex>
         )}

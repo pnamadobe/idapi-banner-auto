@@ -154,7 +154,20 @@
             pmName = pmFile.name;
         }
 
-        // ---- runtime output options (CONFIG defaults, overridable via $.global) ----
+        // ---- runtime output options (CONFIG defaults, overridable via $.global or cloud "parameters" arg) ----
+        function paramFlag(name, fallback) {
+            try {
+                var pj = app.scriptArgs.get("parameters");
+                if (pj) {
+                    // The API may hand params over as an escaped JSON string (\"name\":\"1\"), so allow a
+                    // backslash before each quote.
+                    var m = pj.match(new RegExp('\\\\?"' + name + '\\\\?"\\s*:\\s*(true|false|\\\\?"[^"\\\\]*\\\\?"|\\d+)', "i"));
+                    if (m) { var v = String(m[1]).replace(/[\\"]/g, "").toLowerCase(); return (v === "1" || v === "true" || v === "yes"); }
+                }
+            } catch (e) {}
+            return fallback === true;
+        }
+
         var fmt = String(U.CONFIG.exportFormat).toLowerCase();
         try { if ($.global.BRAND_FORMAT) fmt = String($.global.BRAND_FORMAT).toLowerCase(); } catch (e) {}
         var wantPNG = (fmt === "png" || fmt === "both");
@@ -163,20 +176,12 @@
 
         var writeIndd = (U.CONFIG.writeIndd === true);
         try { if ($.global.BRAND_WRITE_INDD != null) { var wv = String($.global.BRAND_WRITE_INDD).toLowerCase(); writeIndd = (wv === "1" || wv === "true" || wv === "yes"); } } catch (e) {}
-        // Cloud (InDesign API): writeIndd arrives inside the "parameters" script arg
-        // (the same JSON that carries workingFolder). Match it anywhere in the blob.
-        try {
-            var pjW = app.scriptArgs.get("parameters");
-            if (pjW) { var mw = pjW.match(/"writeIndd"\s*:\s*(true|false|"[^"]*"|\d+)/i); if (mw) { var wc = String(mw[1]).replace(/"/g, "").toLowerCase(); writeIndd = (wc === "1" || wc === "true" || wc === "yes"); } }
-        } catch (e) {}
+        writeIndd = paramFlag("writeIndd", writeIndd);
 
         // writePdf (cloud "parameters" arg, like writeIndd): also export each row as one multi-page PDF
         var writePdf = false;
         try { if ($.global.BRAND_WRITE_PDF != null) { var pv = String($.global.BRAND_WRITE_PDF).toLowerCase(); writePdf = (pv === "1" || pv === "true" || pv === "yes"); } } catch (e) {}
-        try {
-            var pjP = app.scriptArgs.get("parameters");
-            if (pjP) { var mp = pjP.match(/"writePdf"\s*:\s*(true|false|"[^"]*"|\d+)/i); if (mp) { var pc = String(mp[1]).replace(/"/g, "").toLowerCase(); writePdf = (pc === "1" || pc === "true" || pc === "yes"); } }
-        } catch (e) {}
+        writePdf = paramFlag("writePdf", writePdf);
 
         // PNG prefs — lossless, keeps crisp text edges; larger files.
         app.pngExportPreferences.pngExportRange = PNGExportRangeEnum.EXPORT_RANGE;
@@ -286,19 +291,6 @@
         // orchestrator parses it); "preflightOverride" runs the checks but never blocks.
         // Finding shape: {severity, code, message, column?, rows?, rowsTotal?}; rows are
         // CSV row numbers (header = row 1), so the first data row is 2.
-        function paramFlag(name) {
-            try {
-                var pj = app.scriptArgs.get("parameters");
-                if (pj) {
-                    // The API may hand params over as an escaped JSON string (\"name\":\"1\"), so allow a
-                    // backslash before each quote.
-                    var m = pj.match(new RegExp('\\\\?"' + name + '\\\\?"\\s*:\\s*(true|false|\\\\?"[^"\\\\]*\\\\?"|\\d+)', "i"));
-                    if (m) { var v = String(m[1]).replace(/[\\"]/g, "").toLowerCase(); return (v === "1" || v === "true" || v === "yes"); }
-                }
-            } catch (e) {}
-            return false;
-        }
-
         function findingJson(severity, code, message, rows, column) {
             var s = '{"severity":' + jesc(severity) + ',"code":' + jesc(code) + ',"message":' + jesc(message);
             if (column) s += ',"column":' + jesc(column);

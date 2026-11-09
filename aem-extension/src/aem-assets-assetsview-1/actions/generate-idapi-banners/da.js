@@ -148,7 +148,7 @@ async function isApproved (author, token, damPath) {
 function sliceOf (...srcs) {
   for (const src of srcs) {
     let p = String(src || '').split('?')[0]
-    try { p = decodeURIComponent(p) } catch (e) {}
+    try { p = decodeURIComponent(p) } catch (e) { /* keep raw */ }
     p = p.replace(/\\/g, '/')
     const m = /(?:^|\/)([^/]+?)--(static-\d+\.png)$/.exec(p) || /(?:^|\/)html5\/([^/]+)\/(static-\d+\.png)$/.exec(p)
     if (m) return { page: m[1], file: m[2] }

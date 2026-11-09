@@ -75,26 +75,26 @@
 - **Finding:** Within a single worker batch (600s Runtime limit), all DAM input downloads (`aemDownload`) executed sequentially, and `inspectInputs()` downloaded the entire `.psd`/`.indd` template binary on every preflight check even when not needed. Meanwhile, file/binary writes (`stageInputs` via Adobe I/O Files TVM and `aemUpload` / `uploadRendition` to AEM JCR/Oak) must remain strictly sequential to avoid TVM rate limits, memory spikes, and AEM JCR/Oak `409 Conflict` errors on parent folder/asset nodes.
 - **Remediation:** Added `mapConcurrent()` (`READ_CONCURRENCY = 4`, matching `probeImages`) for read-only AEM `GET` downloads of images and fonts, made `inspectInputs()` skip downloading the template binary unless an `.indd` has unresolved bare image refs, freed `staged` buffers immediately after `stageInputs()` in `processBatch()`, and kept all file/binary writes (`stageInputs`, `aemUpload`, `completeOne`, `attachPreview`) strictly sequential.
 
-### [ ] 3.4 ExtendScript `parameters` Escaped-Quote Parsing & `computeRoot()` Order
+### [x] 3.4 ExtendScript `parameters` Escaped-Quote Parsing & `computeRoot()` Order
 - **Locations:**
   - `scripts/brand_lib.jsx:112-127`
   - `scripts/generate_variations.jsx:168-179, 281-291`
 - **Finding:**
   1. `paramFlag()` in `generate_variations.jsx:287` handles escaped quotes (`\\?"`) in `app.scriptArgs.get("parameters")`, whereas `writeIndd` (line 170), `writePdf` (line 178), and `workingFolder` (`brand_lib.jsx:115`) use unescaped quote regexes.
   2. `computeRoot()` in `brand_lib.jsx:120` checks the hardcoded fallback `CONFIG.projectRoot` (`/Users/pnam/Sandbox/ids-banner-auto-local`) *before* deriving the root from `$.fileName`, causing local runs in `idapi-banner-auto` to read/write the sibling repo unless `BRAND_PROJECT_ROOT` is set.
-- **Remediation:** Use `paramFlag("writeIndd")` and `paramFlag("writePdf")` in `generate_variations.jsx`, allow optional escaped quotes on `workingFolder` in `brand_lib.jsx`, and check `$.fileName` before `CONFIG.projectRoot` in `computeRoot()`.
+- **Remediation:** Used `paramFlag("writeIndd", writeIndd)` and `paramFlag("writePdf", writePdf)` in `generate_variations.jsx`, allowed optional escaped quotes on `workingFolder` in `brand_lib.jsx`, and checked `$.fileName` before `CONFIG.projectRoot` in `computeRoot()`.
 
 ---
 
 ## 4. Low-Priority / Polish & Hygiene
 
-### [ ] 4.1 ESLint Errors & Outdated E2E Test
+### [x] 4.1 ESLint Errors & Outdated E2E Test
 - **Locations:**
   - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/da.js:151:49` (`no-empty` on `catch (e) {}`)
   - `aem-extension/src/aem-assets-assetsview-1/e2e/generate-idapi-banners.e2e.test.js:12:7` (`no-unused-vars` on `packagejson`, plus outdated comment/assertion about `require-adobe-auth`)
-- **Remediation:** Fix both ESLint errors so `npm run lint` exits 0, and align the E2E test with in-action auth.
+- **Remediation:** Fixed both ESLint errors so `npm run lint` exits 0, and aligned the E2E test with in-action auth.
 
-### [ ] 4.2 Verbose Selection Logging & Dead Debug Fields in UI
+### [x] 4.2 Verbose Selection Logging & Dead Debug Fields in UI
 - **Locations:**
   - `aem-extension/src/aem-assets-assetsview-1/web-src/src/components/ExtensionRegistration.js:58, 60`
   - `aem-extension/src/aem-assets-assetsview-1/web-src/src/components/ModalIndesignBannersGeneration.js:432-434`

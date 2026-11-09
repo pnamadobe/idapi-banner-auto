@@ -55,10 +55,8 @@ function ExtensionRegistration() {
       methods: {
         actionBar: {
           async getActions({ context, resourceSelection }) {
-            try { console.log('[idapi] getActions context=', JSON.stringify(context), 'resourceSelection=', JSON.stringify(resourceSelection)); } catch (e) { console.log('[idapi] getActions', context, resourceSelection); }
             // Only offer the action when an .indd or .psd template is selected.
             const template = selectedTemplatePath(resourceSelection);
-            console.log('[idapi v2] template selected:', template || 'none', '->', template ? 'show button' : 'hide button');
             if (!template) return [];
             return [
               {
