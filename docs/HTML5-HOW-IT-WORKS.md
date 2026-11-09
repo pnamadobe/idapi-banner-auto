@@ -245,8 +245,8 @@ In the browser, the block ([`banner-ads/blocks/ad/ad.js`](https://github.com/pna
 
 **In GitHub Actions ([`package.yml`](https://github.com/pnamadobe/banner-ads/blob/main/.github/workflows/package.yml) → `tools/package/run.mjs`):**
 
-The workflow runs with read-only repo permissions, installs Node and Playwright Chromium, writes the payload to a
-file (it is never printed), and processes 3 ads at a time (`PACKAGE_CONCURRENCY`). For each ad:
+The workflow runs with read-only repo permissions, installs Node and Playwright Chromium (with npm and browser caching), writes the payload to a
+file (it is never printed), and processes 4 ads at a time (`PACKAGE_CONCURRENCY`). For each ad:
 
 1. **Export.** It opens `<page>?v=<row>&export=cm360` and waits for the ad to be ready (60 s timeout).
 2. **Collect.** It reads the block's HTML, the clickTag, the size, the timeline and every image the ad uses.
