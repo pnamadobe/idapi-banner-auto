@@ -69,8 +69,8 @@ your Adobe ID needs write access.
    your Adobe ID with the `author` (or higher) role in the
    [EDS user admin tool](https://tools.aem.live/tools/user-admin/index.html). Skip this if the site is open.
 
-**Check:** in DA, create a test document under `/ads`, click **Preview**, and confirm
-`https://main--<repo>--<owner>.aem.page/ads/<doc>` opens. Delete the test document afterwards.
+**Check:** in DA, create a test document, click **Preview**, and confirm
+`https://main--<repo>--<owner>.aem.page/<doc>` opens. Delete the test document afterwards.
 
 ## Step 5: Pick the site in the Generate Banners dialog
 
@@ -96,7 +96,7 @@ The dialog saves a file named `html5.json` in the folder. You can also upload on
 optional keys:
 
 ```json
-{ "DA_ORG": "<owner>", "DA_SITE": "<repo>", "DA_ADS_ROOT": "/ads" }
+{ "DA_ORG": "<owner>", "DA_SITE": "<repo>" }
 ```
 
 The nearest `html5.json` wins: the campaign folder's own, else the closest folder above it, stopping at the
@@ -104,7 +104,7 @@ folder below `/content/dam`. Saving from the dialog keeps any optional keys alre
 
 | key | default | when to set it |
 |---|---|---|
-| `DA_ADS_ROOT` | `/ads` | campaign pages should go somewhere else in the site |
+| `DA_ADS_ROOT` | `""` *(site root)* | optional prefix folder if pages should go under a subpath instead of `/<template>/<style>` |
 | `EDS_REF` | `main` | previews should use another branch: `https://<ref>--<repo>--<owner>.aem.page` |
 | `GITHUB_REPO` | `<DA_ORG>/<DA_SITE>` | the GitHub repo name differs from the DA org and site |
 | `EYEBROW_RATIO` | `0.35` | a small line set right above the largest text (a kicker like "GET" over "50,000") should be raised to a different share of that text's size; `0` keeps the template's size. HTML5 only: the JPGs keep the template's sizes |

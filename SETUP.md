@@ -176,7 +176,7 @@ cd aem-extension
 aio app use -w Production --no-input
 jq -r '.project.workspace | [.name,.app_url,.action_url] | @tsv' .aio
 # Expected: Production and URLs without "-stage"
-aio app deploy
+aio app deploy --force-build
 ```
 
 Use `aio app use -w Stage --no-input` and URLs containing `-stage` only for
@@ -357,7 +357,7 @@ environment the deployment may use.
 
 **4. Deploy + publish.**
 ```bash
-aio app use -w Production && aio app deploy   # merge (m) .env/.aio when asked
+aio app use -w Production && aio app deploy --force-build   # merge (m) .env/.aio when asked
 ```
 Then **publish/approve in Adobe Exchange** (NOT Developer Console):
 **`exchange.adobe.com/manage`** → **App Builder applications** → your app →
@@ -406,7 +406,7 @@ https://experience.adobe.com/?devMode=true&ext=<STAGE …adobeio-static.net/inde
 | Modal: **"Sign in again and retry" / 401** | The modal reads the user's IMS token via `host.auth.getIMSInfo()` (`attach()`) to verify folder access in-action; reload Assets View if the host did not share the session. |
 | AEM **401 "access token invalid/expired"** | A local dev token died with a session change — use a **Service Credential** (Part 4). |
 | AEM **403 `initiateUpload`** on write-back | Tech account lacks DAM write — add it to a DAM-write group (Part 4, step 3). |
-| Stale bundle / empty modal after deploy | `adobeio-static` caches `index.html` — bump the `?v=` cache-buster on the preview URL. |
+| Stale bundle / empty modal after deploy | `adobeio-static` caches `index.html` — bump the `?v=` cache-buster on the preview URL. Always deploy with `aio app deploy --force-build` so Runtime action zips in `dist/actions` are rebuilt. |
 | **"Response not yet ready"** | Render exceeded the ~60s sync HTTP window — expected; the action finishes async and writes to AEM (fire-and-forget UX). |
 | Output uses the **wrong font** (looks "close but off") | Font substituted, not installed — the exact family+style isn't in `/content/dam/fonts` (or the per-job `fonts/`). Check the run log's `fonts (...)` block; add the discrete static weights the template references. |
 | Render fails **"Returned data file (dataURL) is not JSON"** | The script wrote an unescaped control char (e.g. InDesign's tab-delimited `Font.name`) into `result.json`. Escape `\t`/`\r`/`\n` in the JSON writer, then bump `CAPABILITY_VERSION` and re-`--register`. |
