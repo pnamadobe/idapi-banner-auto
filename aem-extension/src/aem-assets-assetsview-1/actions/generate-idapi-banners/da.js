@@ -75,66 +75,11 @@ async function edsPreview (cfg, token, path, bearer) {
   }
 }
 
-// ---- AEM: delivery URLs and approval ----
+// ---- AEM: delivery URLs and approval check ----
 // author-pX-eY.adobeaemcloud.com -> delivery-pX-eY.adobeaemcloud.com
 function deliveryUrl (author, id, name) {
   const host = new URL(author).host.replace(/^author-/, 'delivery-')
   return `https://${host}/adobe/assets/${id}/as/${encodeURIComponent(name)}`
-}
-const assetApi = (author, damPath) => `${author}/api/assets${enc(damPath.replace(/^\/content\/dam/, ''))}`
-// Approve with a Sling POST on the metadata node. The Assets HTTP API PUT answers 200 for dam:status but
-// does not save it, so it is only a fallback. A dam:status set while asset processing runs can be dropped
-// when processing rewrites the metadata, so wait for processing, approve, read it back, and retry.
-async function approveAsset (author, token, damPath) {
-  const res = await fetch(`${author}${enc(damPath)}/jcr:content/metadata`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ 'dam:status': 'approved' }).toString()
-  })
-  if (res.ok && await isApproved(author, token, damPath)) return
-  const put = await fetch(assetApi(author, damPath), {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ class: 'asset', properties: { 'dam:status': 'approved' } })
-  })
-  if (!res.ok && !put.ok) throw new Error(`approve ${damPath} -> ${res.status} (POST), ${put.status} (PUT)`)
-}
-async function processed (author, token, damPath) {
-  const res = await fetch(`${author}${enc(damPath)}/jcr:content.json`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return false
-  const state = String((await res.json())['dam:assetState'] || 'processed').toLowerCase()
-  return state === 'processed'
-}
-// Tries until `until` (a shared deadline, so a failing approval can't run the worker into its time limit).
-async function approveWhenProcessed (author, token, damPath, sleep, until, maxTries = 10) {
-  let last = 'still processing'
-  for (let i = 0; i < maxTries; i++) {
-    try {
-      if (await processed(author, token, damPath)) {
-        await approveAsset(author, token, damPath)
-        if (await isApproved(author, token, damPath)) return
-        last = 'approval did not save'
-      }
-    } catch (e) { last = e.message }
-    if (Date.now() >= until) break
-    await sleep(Math.min(2000 * 2 ** i, 8000))
-  }
-  throw new Error(`${damPath} could not be approved (${last}), so Dynamic Media will not deliver it`)
-}
-// Dynamic Media serves an asset a little after approval. EDS copies a page's images when it previews the
-// page, so wait (bounded) until the slices are served; an image still missing then previews broken.
-async function waitDelivered (urls, sleep, until) {
-  let pending = [...urls]
-  for (let i = 0; pending.length; i++) {
-    const left = []
-    for (const u of pending) {
-      try { const r = await fetch(u, { method: 'HEAD' }); if (!r.ok) left.push(u) } catch (e) { left.push(u) }
-    }
-    pending = left
-    if (!pending.length || Date.now() >= until) break
-    await sleep(Math.min(2000 * 2 ** i, 10000))
-  }
-  return pending
 }
 async function isApproved (author, token, damPath) {
   const res = await fetch(`${author}${enc(damPath)}/jcr:content/metadata.json`, { headers: { Authorization: `Bearer ${token}` } })
@@ -266,56 +211,7 @@ async function publishHtml5 (ctx) {
       pages.push({ page: p.pagename, path, previewUrl: paths.previewUrl(p.pagename), rows: sheet.data.length })
     } catch (e) { warn(e.code || 'HTML5_DA_ERROR', `${p.pagename}: ${e.message}`) }
   }
-  return { pages, rowsUrl: `${cfg.previewOrigin}${paths.rowsPath}`, warnings, delivery: [] }
+  return { pages, rowsUrl: `${cfg.previewOrigin}${paths.rowsPath}`, warnings }
 }
 
-/*
- * The follow-up to publishHtml5: approve each uploaded slice once AEM has processed it, wait until Dynamic
- * Media serves it, then preview its page again so EDS copies the image. A slice still processing at
- * `approveBy`, or approved but not yet served at `deliveredBy`, is returned in `remaining` (for another
- * run); a page is previewed only once none of its slices remain, unless `final` (the last run).
- * ctx: { cfg, edsToken, edsBearer, author, aemToken, slices: [{ damPath, url, page }], approveBy,
- *        deliveredBy, final, sleep, logger }
- * Returns { previewed: [page path], remaining: [slice], warnings }.
- */
-async function deliverHtml5 (ctx) {
-  const { cfg, author, aemToken } = ctx
-  const sleep = ctx.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
-  const warnings = []
-  const warn = (code, message) => { warnings.push({ code, message }); if (ctx.logger) ctx.logger.warn(`${code}: ${message}`) }
-  const slices = ctx.slices || []
-  const waiting = []
-  const queue = [...slices]
-  await Promise.all(Array.from({ length: Math.min(6, queue.length) }, async () => {
-    for (let s = queue.shift(); s; s = queue.shift()) {
-      try {
-        await approveWhenProcessed(author, aemToken, s.damPath, sleep, ctx.approveBy, 1000)
-      } catch (e) {
-        waiting.push(s)
-        if (ctx.final) warn('HTML5_ASSET_NOT_DELIVERABLE', e.message)
-      }
-    }
-  }))
-  const approved = slices.filter((s) => !waiting.includes(s))
-  const late = new Set(await waitDelivered(approved.map((s) => s.url), sleep, ctx.deliveredBy))
-  const remaining = [...waiting, ...approved.filter((s) => late.has(s.url))]
-  const pagesOf = (list) => [...new Set(list.map((s) => s.page))]
-  const blocked = new Set(pagesOf(remaining))
-  const previewed = []
-  for (const page of pagesOf(slices)) {
-    if (blocked.has(page) && !ctx.final) continue
-    try {
-      await edsPreview(cfg, ctx.edsToken, page, ctx.edsBearer)
-      previewed.push(page)
-    } catch (e) { warn(e.code || 'HTML5_EDS_ERROR', `${page}: ${e.message}`) }
-  }
-  if (ctx.final) {
-    const notServed = approved.filter((s) => late.has(s.url))
-    for (const page of pagesOf(notServed)) {
-      warn('HTML5_ASSET_NOT_DELIVERABLE', `${page}: ${notServed.filter((s) => s.page === page).length} slice(s) not yet served by Dynamic Media; preview the page again in DA once they are`)
-    }
-  }
-  return { previewed, remaining, warnings }
-}
-
-module.exports = { daGet, daPut, edsPreview, deliveryUrl, approveAsset, isApproved, sliceOf, publishHtml5, deliverHtml5 }
+module.exports = { daGet, daPut, edsPreview, deliveryUrl, isApproved, sliceOf, publishHtml5 }

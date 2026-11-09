@@ -140,7 +140,6 @@ async function main (params) {
         job.rowOffset = 0
         job.outputs = []
         delete job.html5
-        await state.delete(`${stateKey}-delivery`)
         job.outputFolder = await resolveOutputFolder({ ...params, aemAuthorUrl: job.aemAuthorUrl || params.aemAuthorUrl })
         delete job.error
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
@@ -151,7 +150,6 @@ async function main (params) {
         requeue(job)
         delete job.error
         delete job.html5
-        await state.delete(`${stateKey}-delivery`)
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)
         return { statusCode: 202, body: publicJob(job) }

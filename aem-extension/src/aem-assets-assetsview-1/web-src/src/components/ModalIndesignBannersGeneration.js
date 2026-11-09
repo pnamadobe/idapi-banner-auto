@@ -82,8 +82,7 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
     call({}).then((b) => setPkg({ ...b, done: b.done || 0 })).catch((e) => setPkgError(String(e.message || e)));
   };
   const pages = (html5 && html5.pages) || [];
-  const delivery = (html5 && html5.delivery) || null;
-  const warnings = [...((delivery && delivery.warnings) || []), ...((html5 && html5.warnings) || [])];
+  const warnings = (html5 && html5.warnings) || [];
   const running = pkg && pkg.status === 'running';
   return (
     <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
@@ -96,13 +95,6 @@ function Html5Panel({ html5, jobId, token, folderUrl }) {
             {p.rows ? ` · ${p.rows} variation${p.rows === 1 ? '' : 's'}` : ''}
           </Text>
         ))}
-        {delivery && (delivery.status === 'pending' || delivery.status === 'running') && (
-          <Text>⏳ Backgrounds are being approved for Dynamic Media ({delivery.total} image{delivery.total === 1 ? '' : 's'}); AEM processes each upload first, so the pages update in a few minutes.</Text>
-        )}
-        {delivery && delivery.status === 'done' && (
-          <Text>✓ Backgrounds approved for Dynamic Media ({delivery.delivered}/{delivery.total}) and the pages previewed again.</Text>
-        )}
-        {delivery && delivery.status === 'failed' && <Text>✖ Backgrounds were not approved: {delivery.error}</Text>}
         {warnings.slice(0, 5).map((w, i) => <Text key={`w-${i}`}>⚠ {typeof w === 'string' ? w : (w.message || JSON.stringify(w))}</Text>)}
         {!url && <Text>The package action URL is not configured.</Text>}
         {pkg && pkg.status !== 'none' && (
@@ -365,25 +357,6 @@ export default function ModalIndesignBannersGeneration() {
     const timer = setInterval(check, 15000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [status, jobId]);
-
-  // After an HTML5 job completes, a follow-up run approves the backgrounds for Dynamic Media and
-  // previews the pages again: keep polling (quietly) until it has finished.
-  const deliveryState = result && result.html5 && result.html5.delivery && result.html5.delivery.status;
-  const delivering = deliveryState === 'pending' || deliveryState === 'running';
-  useEffect(() => {
-    if (status !== 'done' || !jobId || !delivering) return undefined;
-    const url = resolveActionUrl('generate-idapi-banners-status');
-    if (!url) return undefined;
-    let cancelled = false;
-    const timer = setInterval(async () => {
-      try {
-        const res = await invokeAuth(url, { jobId });
-        const body = res && res.body ? res.body : res;
-        if (!cancelled && body && body.status === 'completed') setResult(body);
-      } catch (e) { /* the next tick retries */ }
-    }, 20000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [status, jobId, delivering]);
 
   const close = () => guestConnection && guestConnection.host.modal.closeDialog();
 

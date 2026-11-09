@@ -72,18 +72,5 @@ exports.main = async (params) => {
     body.stale = true
     body.error = 'The worker stopped before the job finished (it ran past its time limit). Generate again to restart it.'
   }
-  // HTML5 backgrounds are approved for Dynamic Media by a follow-up run, after the job completes.
-  if (job.writeHtml5 && body.html5) {
-    const d = await state.get(`idapi-job-${resolvedJobId}-delivery`)
-    if (d) {
-      const { slices, ...delivery } = JSON.parse(d.value)
-      if (slices) delivery.remaining = slices.length
-      if ((delivery.status === 'pending' || delivery.status === 'running') && Date.now() - Date.parse(delivery.updatedAt || '') > staleRunMs) {
-        delivery.status = 'failed'
-        delivery.error = 'The background approval run stopped before it finished. Generate again to restart it.'
-      }
-      body.html5 = { ...body.html5, delivery }
-    }
-  }
   return { statusCode: 200, body }
 }

@@ -50,14 +50,15 @@
 
 ## 3. Medium-Priority Issues (Dead Code, Drift, & Performance)
 
-### [ ] 3.1 Superseded / Unreachable HTML5 Slice Delivery Approval Pipeline
+### [x] 3.1 Superseded / Unreachable HTML5 Slice Delivery Approval Pipeline
 - **Locations:**
-  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/da.js:88-143, 269, 272-320`
-  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners-worker.js:40, 91-99, 147-202`
-  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners-status.js:64-76`
-  - `aem-extension/src/aem-assets-assetsview-1/web-src/src/components/ModalIndesignBannersGeneration.js:99-105, 347-364`
-- **Finding:** `publishHtml5()` (`da.js:230-269`) writes static PNG slices directly into Document Authoring (`.<page>/static-N.png`) rather than AEM DAM, and returns `delivery: []`. Because `delivery` is always empty, the follow-up worker mode (`params.deliver = 1`, `deliverHtml5`, `approveWhenProcessed`, `waitDelivered`, `<stateKey>-delivery`, status polling, and UI status messages) is never triggered in production.
-- **Remediation:** Remove the dead `<stateKey>-delivery` state machine and helpers (or repurpose it if auto-approving unapproved swapped DAM images is desired).
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/da.js`
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners-worker.js`
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners-status.js`
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/index.js`
+  - `aem-extension/src/aem-assets-assetsview-1/web-src/src/components/ModalIndesignBannersGeneration.js`
+- **Finding:** `publishHtml5()` (`da.js`) writes static PNG slices directly into Document Authoring (`.<page>/static-N.png`) rather than AEM DAM, and returned `delivery: []`. Because `delivery` was always empty, the follow-up worker mode (`params.deliver = 1`, `deliverHtml5`, `approveWhenProcessed`, `waitDelivered`, `<stateKey>-delivery`, status polling, and UI status messages) was never triggered in production.
+- **Remediation:** Removed the dead `<stateKey>-delivery` state machine and helpers across `da.js`, `generate-idapi-banners-worker.js`, `generate-idapi-banners-status.js`, `index.js`, `ModalIndesignBannersGeneration.js`, and `test/html5-deliver.test.js`.
 
 ### [x] 3.2 Drift & Duplication Across `scripts/`, `cloud/`, and `aem-extension/`
 - **Locations:**

@@ -93,7 +93,6 @@ test('publishHtml5 happy path writes the sheet, the slices into DA beside the pa
   // slices are not AEM assets: nothing uploaded to AEM, nothing to approve or deliver later
   expect(c.deps.upload).not.toHaveBeenCalled()
   expect(calls.some((x) => /jcr:content\/metadata$/.test(x.url))).toBe(false)
-  expect(r.delivery).toEqual([])
   const sheetBody = /\r\n\r\n([\s\S]*)\r\n--/.exec(calls.find((x) => /variations\.json$/.test(x.url) && x.method === 'PUT').opts.body.toString())[1]
   expect(JSON.parse(sheetBody).data[0].hero).toBe('https://delivery-p1-e2.adobeaemcloud.com/adobe/assets/urn:aaid:aem:hero.jpg/as/hero.jpg')
 })
@@ -151,42 +150,4 @@ test('edsPreview says when EDS could not read the page from DA', async () => {
   const headers = { get: (n) => ({ 'x-error-code': 'AEM_BACKEND_FETCH_FAILED', 'x-error': 'secret-free text' })[n] }
   mockFetch([[/POST .*admin\.hlx\.page/, { ok: false, status: 401, headers }]])
   await expect(da.edsPreview(cfg, '', '/ads/a', 'user-tok')).rejects.toMatchObject({ code: 'HTML5_DA_NO_ACCESS', message: expect.stringMatching(/could not read the page from DA/) })
-})
-
-const SLICE = { damPath: '/content/dam/c/output/html5/assets/medrect-300x250/static-0.png', url: 'https://delivery-p1-e2.adobeaemcloud.com/adobe/assets/urn:aaid:aem:static-0.png/as/static-0.png', page: '/ads/spring/medrect-300x250' }
-const dctx = (extra = {}) => ({ cfg, edsToken: '', edsBearer: 'user-tok', author: AUTHOR, aemToken: 'aem', slices: [SLICE], approveBy: Date.now() + 60000, deliveredBy: Date.now() + 60000, sleep: async () => {}, ...extra })
-
-test('deliverHtml5 approves a slice only once processing is done, re-approving until it reads back, waits for delivery, then previews', async () => {
-  let state = 'processing', approved = false, posts = 0, heads = 0
-  const calls = mockFetch([
-    [/static-0\.png\/jcr:content\.json/, () => { const r = ok({ 'dam:assetState': state }); state = 'processed'; return r }],
-    [/static-0\.png\/jcr:content\/metadata\.json/, () => ok({ 'dam:status': approved ? 'approved' : '' })],
-    // the first approval does not save
-    [/POST .*static-0\.png\/jcr:content\/metadata$/, (url, opts) => { expect(opts.body).toBe('dam%3Astatus=approved'); posts++; approved = posts > 1; return ok({}) }],
-    [/HEAD https:\/\/delivery-/, () => (++heads > 1 ? ok('') : status(404))]
-  ])
-  const r = await da.deliverHtml5(dctx())
-  expect(r).toEqual({ previewed: [SLICE.page], remaining: [], warnings: [] })
-  expect(posts).toBe(2)
-  expect(heads).toBe(2)
-  const preview = calls.findIndex((x) => /admin\.hlx\.page\/preview.*medrect/.test(x.url))
-  expect(calls.map((x) => x.method).lastIndexOf('HEAD')).toBeLessThan(preview)
-  expect(calls[preview].opts.headers).toEqual({ 'x-content-source-authorization': 'Bearer user-tok' })
-})
-
-test('deliverHtml5 leaves a slice still processing for the next run, and warns on the last', async () => {
-  const calls = mockFetch([[/jcr:content\.json/, ok({ 'dam:assetState': 'processing' })]])
-  let r = await da.deliverHtml5(dctx({ approveBy: Date.now() - 1 }))
-  expect(r).toEqual({ previewed: [], remaining: [SLICE], warnings: [] })
-  expect(calls.some((x) => /admin\.hlx\.page/.test(x.url))).toBe(false)
-  r = await da.deliverHtml5(dctx({ approveBy: Date.now() - 1, final: true }))
-  expect(r.warnings.map((w) => w.code)).toEqual(['HTML5_ASSET_NOT_DELIVERABLE'])
-  expect(r.previewed).toEqual([SLICE.page])
-})
-
-test('deliverHtml5 keeps an approved slice Dynamic Media does not serve yet', async () => {
-  mockFetch([[/metadata\.json/, ok({ 'dam:status': 'approved' })], [/HEAD https:\/\/delivery-/, status(404)]])
-  const r = await da.deliverHtml5(dctx({ deliveredBy: Date.now() - 1 }))
-  expect(r.remaining).toEqual([SLICE])
-  expect(r.previewed).toEqual([])
 })
