@@ -7,10 +7,9 @@
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
 const { errorResponse } = require('./utils')
-const { aemContext, aemDownload, aemListSafe, ensureFolder, verifyAemAsset } = require('./generate-idapi-banners/engine')
+const { aemContext, aemDownload, ensureFolder, verifyAemAsset } = require('./generate-idapi-banners/engine')
 const { assetId, applyPlan } = require('./generate-idapi-banners/relations')
 const { attachPreview } = require('./generate-idapi-banners/renditions')
-const { slug } = require('./generate-idapi-banners/html5')
 const pkg = require('./generate-idapi-banners/package')
 
 const TTL = 7 * 24 * 3600
@@ -73,33 +72,43 @@ async function setMetadata (author, token, damPath, properties) {
   if (!res.ok) throw new Error(`metadata ${damPath} -> ${res.status}`)
 }
 
-// Uploads are done; link the zip to its template, previews, backup and slices, and give it a thumbnail.
+// Uploads are done; link the zip to its template, previews and backup, and give it a thumbnail.
 async function finishAd (ctx, ad, report) {
   const { author, aemToken, rec, claims } = ctx
   const warnings = []
   const zipPath = `${ctx.dest}/${ad.name}.zip`
-  try { await setMetadata(author, aemToken, zipPath, pkg.zipMetadata(report, ad, claims.template)) } catch (e) { warnings.push(e.message) }
-  const id = async (p) => { try { return await assetId(author, aemToken, p) } catch (e) { warnings.push(e.message); return null } }
-  const zipId = await id(zipPath)
-  if (!zipId) return warnings
   const [, gif, story] = pkg.expectedNames(ad)
   const others = [`${ctx.dest}/${gif}`, `${ctx.dest}/${story}`]
   if (ad.backup) others.push(`${rec.jobOutput}/${ad.backup}`)
-  const sliceDir = `${rec.outFolder}/html5/assets/${slug(ad.page)}`
-  for (const e of await aemListSafe(author, aemToken, sliceDir)) if (!e.isFolder && /\.png$/i.test(e.name)) others.push(`${sliceDir}/${e.name}`)
+  const id = async (p) => { try { return await assetId(author, aemToken, p) } catch (e) { warnings.push(e.message); return null } }
+  const tplPath = claims.template && ctx.jobFolder ? `${ctx.jobFolder}/${claims.template}` : null
+
+  const [, zipId, otherIds, tplId] = await Promise.all([
+    setMetadata(author, aemToken, zipPath, pkg.zipMetadata(report, ad, claims.template)).catch((e) => { warnings.push(e.message) }),
+    id(zipPath),
+    Promise.all(others.map(id)),
+    tplPath ? id(tplPath) : Promise.resolve(null)
+  ])
+  if (!zipId) return warnings
   const plan = []
   const items = []
-  for (const p of others) { const o = await id(p); if (o) { items.push({ assetId: o, relationType: 'other' }); plan.push({ onId: o, items: [{ assetId: zipId, relationType: 'other' }] }) } }
-  if (items.length) plan.unshift({ onId: zipId, items })
-  if (claims.template && ctx.jobFolder) {
-    const t = await id(`${ctx.jobFolder}/${claims.template}`)
-    if (t) plan.push({ onId: t, items: [{ assetId: zipId, relationType: 'derived' }] })
+  for (const o of otherIds) {
+    if (o) {
+      items.push({ assetId: o, relationType: 'other' })
+      plan.push({ onId: o, items: [{ assetId: zipId, relationType: 'other' }] })
+    }
   }
-  try { warnings.push(...((await applyPlan(author, aemToken, plan)).warnings || []).map(String)) } catch (e) { warnings.push(e.message) }
-  try {
-    const thumb = await aemDownload(author, aemToken, ad.backup ? `${rec.jobOutput}/${ad.backup}` : `${ctx.dest}/${story}`)
-    warnings.push(...((await attachPreview(author, aemToken, zipId, thumb)).warnings || []).map(String))
-  } catch (e) { warnings.push(`preview: ${e.message}`) }
+  if (items.length) plan.unshift({ onId: zipId, items })
+  if (tplId) plan.push({ onId: tplId, items: [{ assetId: zipId, relationType: 'derived' }] })
+  await Promise.all([
+    applyPlan(author, aemToken, plan).then((r) => warnings.push(...(r.warnings || []).map(String))).catch((e) => warnings.push(e.message)),
+    (async () => {
+      try {
+        const thumb = await aemDownload(author, aemToken, ad.backup ? `${rec.jobOutput}/${ad.backup}` : `${ctx.dest}/${story}`)
+        warnings.push(...((await attachPreview(author, aemToken, zipId, thumb)).warnings || []).map(String))
+      } catch (e) { warnings.push(`preview: ${e.message}`) }
+    })()
+  ])
   return warnings
 }
 
@@ -135,9 +144,9 @@ async function main (params) {
       case 'initiate': {
         const ad = adAt(rec, params.ad)
         checkFiles(ad, params.files)
-        const files = []
-        for (const f of params.files) files.push(await initiateOne(author, aemToken, ctx.dest, f))
-        return { statusCode: 200, body: { files } }
+        const first = await initiateOne(author, aemToken, ctx.dest, params.files[0])
+        const rest = await Promise.all(params.files.slice(1).map((f) => initiateOne(author, aemToken, ctx.dest, f)))
+        return { statusCode: 200, body: { files: [first, ...rest] } }
       }
       case 'complete': {
         const ad = adAt(rec, params.ad)
@@ -149,7 +158,7 @@ async function main (params) {
           return { statusCode: 200, body: { ok: false } }
         }
         checkFiles(ad, params.files, { needToken: true })
-        for (const f of params.files) await completeOne(author, aemToken, ctx.dest, f)
+        await Promise.all(params.files.map((f) => completeOne(author, aemToken, ctx.dest, f)))
         const warnings = await finishAd(ctx, ad, report)
         const fid = report.fidelity || {}
         rec.results[params.ad] = {

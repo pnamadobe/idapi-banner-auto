@@ -101,9 +101,11 @@
 - **Finding:** `ExtensionRegistration.js` logs `JSON.stringify(context)` and `JSON.stringify(resourceSelection)` on every selection change in Assets View, and `ModalIndesignBannersGeneration.js` references `job.count`, `job.rawSelection`, and `job.rawContext` which `readJob()` never populates.
 - **Remediation:** Remove noisy `console.log` calls in `getActions` and clean up the dead debug fields in the modal.
 
-### [ ] 4.3 HTML5 CM360 Zip Packaging Latency (Noted During Live Testing)
+### [x] 4.3 HTML5 CM360 Zip Packaging Latency (Noted During Live Testing)
 - **Locations:**
-  - `banner-ads` `.github/workflows/package.yml` & `tools/package/run.mjs`
+  - `banner-ads` `.github/workflows/package.yml`, `tools/package/run.mjs`, & `tools/package/lib.mjs`
   - `aem-extension/src/aem-assets-assetsview-1/actions/html5-writeback.js`
-- **Finding:** End-to-end CM360 zip generation takes a long time across size × row combinations (GitHub Actions runner startup + Playwright Chromium install + per-ad page load, budget-step image downloads, offline zip verification, GIF/storyboard frame capture, and writeback uploads).
-- **Remediation (TODO):** Profile and optimize `tools/package/run.mjs` and `package.yml` (e.g., cache Playwright browsers in GitHub Actions, cache static slice buffers per size across rows, increase `PACKAGE_CONCURRENCY` or shard across workflow matrix jobs, and parallelize writeback uploads).
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/renditions.js`
+  - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/relations.js`
+- **Finding:** End-to-end CM360 zip generation took a long time across size × row combinations due to ~36 sequential AEM HTTP round-trips per ad inside `html5-writeback.js`, globally serialized `initiate` + binary `PUT` uploads in `banner-ads/tools/package/run.mjs`, 60 separate IPC calls to decode GIF frames plus duplicate storyboard screenshots, repeated `deflateRawSync`/`crc32` on cached slice buffers across budget steps and rows, and uncached Playwright Chromium installs in GitHub Actions.
+- **Remediation:** Parallelized `initiateOne`, `completeOne`, `finishAd`, `attachPreview` (5 renditions concurrently), and `applyPlan` in `idapi-banner-auto`; moved `initiate` and parallel binary `uploadParts` outside `serial()`, batch-decoded GIF frames in one `tool.evaluate()` call, deduplicated storyboard screenshots, cached `ad.css` and `backup` reads, memoized `zip()` deflate/CRC in a `WeakMap`, raised default `PACKAGE_CONCURRENCY` to 4, and added npm + Playwright browser caching in `banner-ads/.github/workflows/package.yml`.

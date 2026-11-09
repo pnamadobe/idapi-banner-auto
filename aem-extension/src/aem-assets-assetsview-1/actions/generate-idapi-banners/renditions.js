@@ -36,13 +36,13 @@ async function uploadRendition (author, token, assetId, name, buf) {
   if (!done.ok) throw new Error(`complete rendition ${name} -> ${done.status} ${(await done.text()).slice(0, 120)}`)
 }
 
-// Attach the preview image under every standard rendition name. Returns { created, warnings }.
+// Attach the preview image under every standard rendition name in parallel. Returns { created, warnings }.
 async function attachPreview (author, token, assetId, buf, names = RENDITION_NAMES) {
   let created = 0
   const warnings = []
-  for (const name of names) {
+  await Promise.all(names.map(async (name) => {
     try { await uploadRendition(author, token, assetId, name, buf); created++ } catch (e) { warnings.push(e.message) }
-  }
+  }))
   return { created, warnings }
 }
 

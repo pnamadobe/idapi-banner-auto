@@ -49,13 +49,13 @@ async function applyPlan (author, token, plan) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
   const warnings = []
   let created = 0
-  for (const { onId, items } of plan) {
+  await Promise.all(plan.map(async ({ onId, items }) => {
     try {
       const url = `${author}/adobe/assets/${onId}/relations`
       const cur = await fetch(url, { headers })
       if (!cur.ok) throw new Error(`get relations -> ${cur.status}`)
       const todo = newItems((await cur.json()).items, items)
-      if (!todo.length) continue
+      if (!todo.length) return
       // AEM answers 5xx ("Error saving ...") when the same asset is being written at the same time; one retry clears it.
       let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ items: todo }) })
       for (let attempt = 1; res.status >= 500 && attempt <= 2; attempt++) {
@@ -67,7 +67,7 @@ async function applyPlan (author, token, plan) {
     } catch (e) {
       warnings.push(`${onId}: ${e.message}`)
     }
-  }
+  }))
   return { created, warnings }
 }
 
