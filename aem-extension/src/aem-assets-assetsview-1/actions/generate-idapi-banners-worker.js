@@ -76,6 +76,7 @@ async function main (params) {
     // reason) instead of reporting success. A retry starts over and publishes again.
     if (job.writeHtml5 && job.rowOffset === 0 && !((job.html5 && job.html5.pages) || []).length) {
       job.status = 'failed'
+      delete job.phase
       job.error = `No HTML5 pages were published: ${html5Reason(job.html5)}`
       job.updatedAt = new Date().toISOString()
       await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
@@ -85,6 +86,7 @@ async function main (params) {
     job.rowOffset += rows
     if (rows < job.batchSize) {
       job.status = 'completed'
+      delete job.phase
       // once everything is uploaded, restore INDD -> PDF relations that AEM's own XMP-based inference replaced
       if (job.writeIndd) {
         try { await finalizeRelations(context.author, context.aemToken, job.outputFolder || `${job.folder}/output`, job.outputs || []) } catch (e) { console.warn(`finalizeRelations: ${e.message}`) }
@@ -105,6 +107,7 @@ async function main (params) {
     const current = await state.get(stateKey)
     const job = current ? JSON.parse(current.value) : { jobId }
     job.status = 'failed'
+    delete job.phase
     job.error = error.message
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
     if (context) await saveManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })

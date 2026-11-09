@@ -30,6 +30,7 @@ const publicJob = (job) => ({
   folder: job.folder,
   outputFolder: job.outputFolder || (job.folder ? `${job.folder}/output` : undefined),
   status: job.status,
+  ...(job.phase ? { phase: job.phase } : {}),
   count: (job.outputs || []).filter(isDeliverable).length,
   error: job.error,
   ...(job.writeHtml5 ? { writeHtml5: true, html5: job.html5 || null, ...(job.animationStyle ? { animationStyle: job.animationStyle } : {}), ...(job.html5Folder ? { html5Folder: job.html5Folder } : {}) } : {}),

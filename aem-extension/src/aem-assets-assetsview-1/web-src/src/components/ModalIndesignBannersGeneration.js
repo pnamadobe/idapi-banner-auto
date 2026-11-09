@@ -588,6 +588,7 @@ export default function ModalIndesignBannersGeneration() {
               <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
                 <Flex direction="column" gap="size-100">
                   <Text><b>Status:</b> {result.status || 'queued'}</Text>
+                  {result.phase && <Text><b>Step:</b> {result.phase}</Text>}
                   {!html5Run && <Text><b>Verified outputs:</b> {result.count || 0}</Text>}
                 </Flex>
               </View>
@@ -614,7 +615,14 @@ export default function ModalIndesignBannersGeneration() {
         {status === 'error' && (
           <Flex direction="column" gap="size-150">
             <Heading level={3}>Generation failed</Heading>
-            <View backgroundColor="gray-100" padding="size-150" borderRadius="regular"><Text>{error}</Text></View>
+            <View backgroundColor="gray-100" padding="size-150" borderRadius="regular">
+              <Flex direction="column" gap="size-75">
+                <Text>{error}</Text>
+                {/not_started|poll timeout|InDesign API did not start/i.test(error) && (
+                  <Text>⚠ <b>Upstream Adobe InDesign API issue:</b> Your template and inputs passed validation, but the external Adobe InDesign API cloud service did not start or finish the render job in time. Please wait a couple of minutes and try again.</Text>
+                )}
+              </Flex>
+            </View>
             {result && result.jobId && <Text><b>Job ID:</b> <code>{result.jobId}</code></Text>}
             {/* Only a job that ran has a manifest; HTML5 runs report on the job itself. */}
             {!html5Run && result && result.jobId && (

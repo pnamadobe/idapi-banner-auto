@@ -413,11 +413,11 @@ async function stageInputs (staged) {
   return { assets, files, prefix }
 }
 const idH = (p, tok) => ({ Authorization: `Bearer ${tok}`, 'x-api-key': p.FFS_CLIENT_ID, 'x-gw-ims-org-id': p.FFS_ORG_ID })
-async function indesignRender (p, tok, assets, renderParams) {
+async function indesignRender (p, tok, assets, renderParams, onStatus) {
   const er = await fetch(p.INDESIGN_EXECUTE_URL, { method: 'POST', headers: { ...idH(p, tok), 'Content-Type': 'application/json' }, body: JSON.stringify({ assets, params: renderParams || {} }) })
   const et = await er.text()
   if (er.status !== 202) throw new Error(`execute ${er.status} ${et}`)
-  const { outputs, status } = await indesignPoll(p, tok, JSON.parse(et).statusUrl)
+  const { outputs, status } = await indesignPoll(p, tok, JSON.parse(et).statusUrl, onStatus)
   // The script's dataURL file (result.json) comes back in the status response, not as an upload.
   outputs.data = renderData(status)
   outputs.statusKeys = Object.keys(status || {}) // names only, for diagnostics
@@ -443,13 +443,29 @@ function findPreflightText (v, depth = 0) {
   for (const x of Object.values(v)) { const t = findPreflightText(x, depth + 1); if (t) return t }
   return ''
 }
-async function indesignPoll (p, tok, statusUrl) {
+// Normally the InDesign API moves a job from `not_started` -> `running` within 4-15s. If it stays in
+// `not_started` for 90+ seconds (23 polls x 4s), the external InDesign API queue is stalled: fail fast
+// with an actionable upstream-queue error instead of burning the full 8-minute render window.
+const MAX_NOT_STARTED_POLLS = 23
+async function indesignPoll (p, tok, statusUrl, onStatus) {
   let lastSt = 'unknown'
+  let notStartedPolls = 0
   for (let n = 0; n < 120; n++) {
     await new Promise((r) => setTimeout(r, 4000))
     const s = await (await fetch(statusUrl, { headers: idH(p, tok) })).json()
     const st = (s.status || '').toLowerCase()
     if (st) lastSt = st
+    if (['not_started', 'pending', 'queued'].includes(st)) {
+      notStartedPolls++
+      if (onStatus && notStartedPolls === 3) await onStatus('Waiting for Adobe InDesign API queue (not_started)…')
+      if (notStartedPolls >= MAX_NOT_STARTED_POLLS) {
+        throw new Error('Adobe InDesign API did not start the job after 90 seconds (queue status: not_started). The InDesign API service may be experiencing a queue backlog or outage — please try again in a few minutes.')
+      }
+      continue
+    }
+    if (onStatus && ['running', 'in_progress', 'processing'].includes(st) && n < 5) {
+      await onStatus('Rendering in Adobe InDesign API…')
+    }
     if (['succeeded', 'completed', 'success', 'done'].includes(st)) {
       let page = s, out = []
       for (;;) {
@@ -745,6 +761,12 @@ async function processBatch (params, job, state) {
     // Fast path for HTML5-only runs: when this template's HTML5 pages and slices already exist on the
     // EDS/DA site (from an earlier run or another animation style), reuse their exported geometry and
     // static slices directly and skip calling the InDesign API.
+    const setPhase = async (phase) => {
+      if (!state || !job || job.phase === phase) return
+      job.phase = phase
+      job.updatedAt = new Date().toISOString()
+      try { await state.put(job.stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true }) } catch (e) { /* non-fatal */ }
+    }
     let cachedHtml5 = null
     if (html5Only) {
       try {
@@ -756,7 +778,10 @@ async function processBatch (params, job, state) {
           template: c.template.name,
           pagemapText: pagemapBuf.toString('utf8')
         })
-        if (cachedHtml5) logger.info(`html5: reusing ${Object.keys(cachedHtml5.manifest).length} page(s) from ${cachedHtml5.fromBase} (skipping InDesign API render)`)
+        if (cachedHtml5) {
+          logger.info(`html5: reusing ${Object.keys(cachedHtml5.manifest).length} page(s) from ${cachedHtml5.fromBase} (skipping InDesign API render)`)
+          job && (job.phase = `Reusing existing HTML5 layers (${Object.keys(cachedHtml5.manifest).length} sizes) — publishing to Document Authoring…`)
+        }
       } catch (e) { logger.warn(`html5 reuse check failed: ${e.message}`) }
     }
 
@@ -825,7 +850,7 @@ async function processBatch (params, job, state) {
       // the editable option also yields a multi-page PDF of each variation (all sizes) to view in AEM
       // The template checks run once, in the first batch, inside the capability script (needs the re-registered script).
       const gate = rowOffset === 0 ? { preflightGate: '1', ...(params.preflightOverride === '1' ? { preflightOverride: '1' } : {}) } : {}
-      const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate, ...(wantHtml5 ? { writeHtml5: '1' } : {}) })
+      const outputs = await indesignRender(params, idTok, assets, { writeIndd, writePdf: writeIndd, ...gate, ...(wantHtml5 ? { writeHtml5: '1' } : {}) }, setPhase)
 
       // 5. write outputs back to AEM <folder>/output (unpublished → review)
       logger.info(`writing ${outputs.length} outputs to ${outFolder}`)

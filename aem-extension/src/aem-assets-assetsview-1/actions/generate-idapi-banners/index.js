@@ -111,6 +111,7 @@ async function main (params) {
     const requeue = (job) => {
       job.status = 'queued'
       job.queuedAt = job.retriedAt = new Date().toISOString()
+      delete job.phase
       delete job.recoveryAt
       delete job.recoveryError
     }
