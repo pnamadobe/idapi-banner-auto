@@ -8,7 +8,7 @@ const { errorResponse, stringParameters, checkMissingRequestInputs, userBearer }
 const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, isDamFolder, outputMode } = require('../job-utils')
 const { inspectInputs, resolveOutputFolder, aemContext, hasFolderAccess, html5SiteFor } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
-const { campaignPaths } = require('./html5')
+const { campaignPaths, normalizeAnimationStyle } = require('./html5')
 const { saveSite } = require('./site')
 
 const ttl = 7 * 24 * 3600
@@ -98,10 +98,11 @@ async function main (params) {
       }
     }
     // Where an HTML5 job's DA pages go, so the modal can link the DA folder as soon as the job starts.
+    const animationStyle = writeHtml5 ? normalizeAnimationStyle(params.animationStyle) : undefined
     const html5Folder = (tpl) => {
       if (!site) return undefined
-      const base = campaignPaths(site, params.folder.split('/').pop(), tpl).base
-      return { site: `${site.org}/${site.site}`, path: base, daUrl: `https://da.live/#/${site.org}/${site.site}${base}` }
+      const base = campaignPaths(site, params.folder.split('/').pop(), tpl, animationStyle).base
+      return { site: `${site.org}/${site.site}`, path: base, daUrl: `https://da.live/#/${site.org}/${site.site}${base}`, animationStyle }
     }
     const queue = (jobId) => invoke('generate-idapi-banners-worker', { jobId, ...(daUserToken ? { daUserToken } : {}) })
     // Re-queue an existing job with a fresh queue time. A stale queuedAt (left by an earlier run) makes
@@ -127,7 +128,10 @@ async function main (params) {
       if (blocked) return blocked
       stamp(job)
       job.writeImages = writeImages // jobs saved before HTML5 runs dropped the flattened images
-      if (writeHtml5) job.html5Folder = html5Folder((checked && checked.template) || job.template)
+      if (writeHtml5) {
+        job.animationStyle = animationStyle
+        job.html5Folder = html5Folder((checked && checked.template) || job.template)
+      }
       if (stale) {
         if (forced) await state.delete(`${stateKey}-lock`)
         requeue(job)
@@ -166,7 +170,7 @@ async function main (params) {
       writeIndd,
       writeImages,
       writeHtml5,
-      ...(writeHtml5 ? { html5Folder: html5Folder((checked && checked.template) || template) } : {}),
+      ...(writeHtml5 ? { animationStyle, html5Folder: html5Folder((checked && checked.template) || template) } : {}),
       batchSize: Math.max(1, Math.min(10, Number(params.batchSize) || 2)),
       outputFolder: await resolveOutputFolder(params),
       rowOffset: 0,

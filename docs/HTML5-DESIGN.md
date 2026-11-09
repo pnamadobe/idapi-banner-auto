@@ -250,8 +250,10 @@ layers. That is one page per size, not sizes × rows, so a layout fix applies to
 | `kenburns` | scale 1.08→1 over the timeline (full-bleed image layers only) |
 | `pulse` | after entry, scale 1→1.05→1 (CTA) |
 
-  The syntax is `preset[@delay][/duration]`. With nothing set, the background is visible at t=0, `hero` gets
-  kenburns, text gets `fadeUp` in reading order 0.3 s apart, and `cta` comes last with `pulse`;
+  The syntax is `preset[@delay][/duration]`. In the Generate HTML5 banners modal, authors can also pick a
+  whole-banner **Animation style** (`editorial` default, `luxury`, `kinetic`, `retail`, `wipe`, `minimal`), which
+  publishes into `/ads/<template>/<campaign>/<style>` and pre-populates each layer's motion cell according to
+  that style's choreography (unless overridden by the pagemap `motion` column or in DA);
 * has two modes: `?v=` for preview, and `?export=cm360` for packaging. Export mode adds `ad.size` and `clickTag`,
   wraps the stage in the click-through anchor, and loads no page chrome, RUM or other external scripts;
 * exposes `window.adTimeline` (`{duration, seek(t)}`) so packaging can step through the animation frame by frame.

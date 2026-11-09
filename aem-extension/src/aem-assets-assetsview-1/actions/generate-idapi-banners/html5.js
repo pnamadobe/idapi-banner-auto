@@ -10,6 +10,20 @@ const { rowsFromRecords, splitRecord } = require('./psd')
 
 const PRESETS = ['none', 'fade', 'fadeUp', 'fadeDown', 'slideLeft', 'slideRight', 'wipe', 'zoomIn', 'kenburns', 'pulse']
 const CANONICAL = Object.fromEntries(PRESETS.map((p) => [p.toLowerCase(), p]))
+const ANIMATION_STYLES = [
+  { id: 'editorial', label: 'Subtle / Editorial (Airlines, financial services, healthcare, B2B)' },
+  { id: 'luxury', label: 'Luxury / Cinematic (Hospitality, fashion, luxury retail, automotive)' },
+  { id: 'kinetic', label: 'Bold / Kinetic (Sports, entertainment, tech launches, events)' },
+  { id: 'retail', label: 'Retail / Promo (Sales, QSR, e-commerce, loyalty offers)' },
+  { id: 'wipe', label: 'Clean Wipe / Split (Modern SaaS, telecom, travel destinations)' },
+  { id: 'minimal', label: 'Minimal / Compliance-Safe (Pharma, regulated finance, strict brand guidelines)' }
+]
+const DEFAULT_ANIMATION_STYLE = 'editorial'
+const STYLE_IDS = new Set(ANIMATION_STYLES.map((s) => s.id))
+const normalizeAnimationStyle = (s) => {
+  const k = String(s || '').trim().toLowerCase()
+  return STYLE_IDS.has(k) ? k : DEFAULT_ANIMATION_STYLE
+}
 const MAX_TOTAL = 30
 const MAX_LOOPS = 3
 const DEFAULTS = { duration: 6, loops: 1, budgetKB: 150 }
@@ -206,12 +220,98 @@ function scaleText (it, f) {
   }
 }
 
+// Whole-banner animation style choreography: resolves per-layer motion (`preset@delay/duration`)
+// for layers without an explicit pagemap or authored override.
+const isStaticName = (n) => /^(static|background|bg)\b/i.test(n)
+const isHeroName = (n) => /^hero\b/i.test(n)
+const isCtaName = (n) => /^cta\b/i.test(n)
+const isFullBleedBox = (b, w, h) => Boolean(b && b.x <= 1 && b.y <= 1 && b.x + b.w >= w - 1 && b.y + b.h >= h - 1)
+const readingOrder = (a, b) => ((a.box && b.box) ? (a.box.y - b.box.y) || (a.box.x - b.box.x) : 0)
+const r2 = (n) => Math.round(Number(n) * 100) / 100
+const fmtMotion = (preset, delay, dur, total) => {
+  if (!preset || preset === 'none') return 'none'
+  const d = Math.max(0, Math.min(Number(dur) || 0.5, total))
+  const at = Math.max(0, Math.min(Number(delay) || 0, Math.max(0, total - d)))
+  return `${preset}@${r2(at)}/${r2(d)}`
+}
+
+function styleMotionForPage (page, animationStyle, duration = DEFAULTS.duration) {
+  if (!animationStyle) return {}
+  const style = normalizeAnimationStyle(animationStyle)
+  const total = Math.max(0.5, Number(duration) || DEFAULTS.duration)
+  const w = Number(page && page.width) || 0
+  const h = Number(page && page.height) || 0
+  const elements = (page && page.elements) || []
+  const out = {}
+  const others = elements.filter((e) => e.label && !isStaticName(e.label) && !isHeroName(e.label) && !isCtaName(e.label)).slice().sort(readingOrder)
+  const ctas = elements.filter((e) => e.label && isCtaName(e.label)).slice().sort(readingOrder)
+  const heroes = elements.filter((e) => e.label && isHeroName(e.label))
+
+  const plans = {
+    editorial: {
+      step: 0.3,
+      entry: 0.5,
+      hero: (e) => (isFullBleedBox(e.box, w, h) ? 'kenburns' : fmtMotion('fade', 0, 0.5, total)),
+      other: (e, i, t) => fmtMotion(e.kind === 'image' ? 'fade' : 'fadeUp', t, 0.5, total),
+      cta: (t) => fmtMotion('pulse', t, 1, total)
+    },
+    luxury: {
+      step: 0.45,
+      entry: 0.9,
+      hero: (e) => (isFullBleedBox(e.box, w, h) ? 'kenburns' : fmtMotion('zoomIn', 0, 1, total)),
+      other: (e, i, t) => fmtMotion(i === 0 && e.kind !== 'image' ? 'fadeDown' : 'fade', t, 0.9, total),
+      cta: (t) => fmtMotion('fade', t, 0.9, total)
+    },
+    kinetic: {
+      step: 0.18,
+      entry: 0.35,
+      hero: () => fmtMotion('zoomIn', 0, 0.4, total),
+      other: (e, i, t) => fmtMotion(i % 2 === 0 ? 'slideLeft' : 'slideRight', t, 0.35, total),
+      cta: (t) => fmtMotion('pulse', t, 0.7, total)
+    },
+    retail: {
+      step: 0.25,
+      entry: 0.45,
+      hero: () => fmtMotion('zoomIn', 0, 0.5, total),
+      other: (e, i, t) => fmtMotion(e.kind === 'image' || i === 0 ? 'zoomIn' : 'fadeDown', t, 0.45, total),
+      cta: (t) => fmtMotion('pulse', t, 1.2, total)
+    },
+    wipe: {
+      step: 0.25,
+      entry: 0.5,
+      hero: () => fmtMotion('wipe', 0, 0.6, total),
+      other: (e, i, t) => fmtMotion('wipe', t, 0.5, total),
+      cta: (t) => fmtMotion('wipe', t, 0.5, total)
+    },
+    minimal: {
+      step: 0.35,
+      entry: 0.4,
+      hero: () => fmtMotion('fade', 0, 0.4, total),
+      other: (e, i, t) => fmtMotion('fade', t, 0.4, total),
+      cta: (t) => fmtMotion('fade', t, 0.4, total)
+    }
+  }
+  const plan = plans[style] || plans.editorial
+  for (const e of heroes) out[String(e.label).toLowerCase()] = plan.hero(e)
+  let t = plan.step
+  others.forEach((e, i) => {
+    out[String(e.label).toLowerCase()] = plan.other(e, i, t)
+    t += plan.step
+  })
+  ctas.forEach((e) => {
+    out[String(e.label).toLowerCase()] = plan.cta(t)
+    t += plan.step
+  })
+  return out
+}
+
 // Page manifest -> block layers back to front. Slices carry an image URL (sliceUrl(slice));
 // elements bind to the sheet column named by their label. Motion: authored cell on the existing
-// DA page wins, then the pagemap motion map, else empty (the block picks a default).
+// DA page wins, then the pagemap motion map, then the chosen animationStyle, else empty (the block picks a default).
 // text: { eyebrowRatio, scale } (see textScales).
-function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {}, text } = {}) {
+function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {}, text, animationStyle, duration } = {}) {
   const scales = textScales(page.elements || [], text)
+  const styleMotion = styleMotionForPage(page, animationStyle, duration)
   const items = [
     ...(page.slices || []).map((s, i) => ({ ...s, kind: 'image', slice: true, z: s.z == null ? i : s.z })),
     ...(page.elements || []).map((e, i) => ({ ...scaleText(e, scales.get(e)), name: e.label, z: e.z == null ? 1000 + i : e.z }))
@@ -219,7 +319,7 @@ function layersFromManifest (page, { sliceUrl, pagemapMotion = {}, authored = {}
   return items.map((it) => {
     const name = String(it.name || it.label)
     const key = name.toLowerCase()
-    const motion = key in authored ? authored[key] : (pagemapMotion[key] || '')
+    const motion = key in authored ? (authored[key] || styleMotion[key] || '') : (pagemapMotion[key] || styleMotion[key] || '')
     if (it.slice) {
       return { name, kind: 'image', source: sliceUrl ? sliceUrl(it) : it.file, image: true, box: boxStr(it.box || { x: 0, y: 0, w: page.width, h: page.height }), motion, style: '' }
     }
@@ -376,9 +476,11 @@ function siteConfig (text, foundAt) {
 
 // Paths for a campaign: { pagePath(pagename), sheetPath, rowsPath, previewUrl(pagename, row) }.
 // With a template, its file name (no extension) is a folder above the campaign: /ads/<template>/<campaign>/...
-function campaignPaths (cfg, campaign, template) {
+// With an animationStyle, its slug is a subfolder inside the campaign: /ads/<template>/<campaign>/<style>/...
+function campaignPaths (cfg, campaign, template, animationStyle) {
   const tpl = slug(String(template || '').replace(/\.[^.]+$/, ''))
-  const base = `${cfg.root}${tpl ? `/${tpl}` : ''}/${slug(campaign) || 'campaign'}`
+  const style = animationStyle ? normalizeAnimationStyle(animationStyle) : ''
+  const base = `${cfg.root}${tpl ? `/${tpl}` : ''}/${slug(campaign) || 'campaign'}${style ? `/${style}` : ''}`
   return {
     base,
     pagePath: (pagename) => `${base}/${slug(pagename)}`,
@@ -390,6 +492,10 @@ function campaignPaths (cfg, campaign, template) {
 
 module.exports = {
   PRESETS,
+  ANIMATION_STYLES,
+  DEFAULT_ANIMATION_STYLE,
+  normalizeAnimationStyle,
+  styleMotionForPage,
   normalizeMotion,
   parseMotionMap,
   pagemapHtml5,

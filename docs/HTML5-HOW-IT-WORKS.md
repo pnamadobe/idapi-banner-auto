@@ -32,13 +32,13 @@ see [HTML5-DESIGN.md](HTML5-DESIGN.md). For the InDesign API, AEM and extension 
         │
         │  publishHtml5 (as the signed-in user)
         ▼
- Document Authoring (da.live)  <org>/<site>/ads/<template>/<campaign>/
+ Document Authoring (da.live)  <org>/<site>/ads/<template>/<campaign>/<style>/
    variations.json  (the CSV as a DA sheet, image cells = Dynamic Media delivery URLs)
    <page>           (one page per html5 size, holding an `ad` block)
    .<page>/static-N.png  (the slices)
         │  EDS preview
         ▼
- https://main--<site>--<org>.aem.page/ads/<template>/<campaign>/<page>?v=<row>
+ https://main--<site>--<org>.aem.page/ads/<template>/<campaign>/<style>/<page>?v=<row>
         │
         │  Package for CM360 (repository_dispatch → GitHub Actions in your site repo)
         ▼
@@ -108,6 +108,21 @@ The page map is any `*.csv` in the folder with `pagemap` in its name. It has `pa
 Motion presets: `none`, `fade`, `fadeUp`, `fadeDown`, `slideLeft`, `slideRight`, `wipe`, `zoomIn`, `kenburns`,
 `pulse`. Authors can change motion later in the DA page; a re-run keeps their changes.
 
+### Whole-banner animation styles
+
+On the **HTML5 banners** confirmation screen (after the DA org and site are confirmed), the **Animation style**
+dropdown chooses a choreography for every layer that has no explicit pagemap or DA-authored motion, and
+publishes into a subfolder named after the style (`/ads/<template>/<campaign>/<style>`):
+
+| Style (`id`) | Dropdown label | Choreography |
+|---|---|---|
+| `editorial` *(default)* | Subtle / Editorial (Airlines, financial services, healthcare, B2B) | `hero`: `kenburns` (or `fade`); body in reading order (`0.3 s` step): `fadeUp` (text) / `fade` (images); `cta`: `pulse` |
+| `luxury` | Luxury / Cinematic (Hospitality, fashion, luxury retail, automotive) | `hero`: `kenburns` (or `zoomIn`); body (`0.45 s` step, `0.9 s` entry): `fadeDown` on lead text, `fade` on rest; `cta`: `fade` |
+| `kinetic` | Bold / Kinetic (Sports, entertainment, tech launches, events) | `hero`: fast `zoomIn`; body (`0.18 s` step, `0.35 s` entry): alternating `slideLeft` / `slideRight`; `cta`: fast `pulse` |
+| `retail` | Retail / Promo (Sales, QSR, e-commerce, loyalty offers) | `hero`: `zoomIn`; body (`0.25 s` step, `0.45 s` entry): `zoomIn` on lead/images, `fadeDown` on rest; `cta`: `pulse` |
+| `wipe` | Clean Wipe / Split (Modern SaaS, telecom, travel destinations) | `hero`, body (`0.25 s` step, `0.5 s` entry), and `cta`: geometric `wipe` reveals |
+| `minimal` | Minimal / Compliance-Safe (Pharma, regulated finance, strict brand guidelines) | `hero`, body (`0.35 s` step, `0.4 s` entry), and `cta`: pure opacity `fade` (no translation or scale) |
+
 ### Script Labels decide what is live
 
 * A frame is **live** when its Script Label matches a column name in the variations CSV. Live text stays real
@@ -172,8 +187,9 @@ The HTML5 export runs in the first batch only. It needs all rows later, so the f
 After the render, the action publishes to the DA org and site named by the nearest `html5.json`. Every write
 runs as the user who clicked Generate, unless the deployment sets service tokens.
 
-Content goes under `<DA_ADS_ROOT>/<template>/<campaign>` (default root `/ads`; template and campaign are the
-slugged names of the template file and the campaign folder):
+Content goes under `<DA_ADS_ROOT>/<template>/<campaign>/<style>` (default root `/ads`; template and campaign are the
+slugged names of the template file and the campaign folder, and `<style>` is the animation style chosen in the
+Generate HTML5 banners modal: `editorial`, `luxury`, `kinetic`, `retail`, `wipe` or `minimal`):
 
 1. **The variations sheet** (`variations.json`). The full CSV is written as a DA sheet. Cells that name an image
    are replaced with that asset's **Dynamic Media delivery URL**. An image that is not approved gets the warning

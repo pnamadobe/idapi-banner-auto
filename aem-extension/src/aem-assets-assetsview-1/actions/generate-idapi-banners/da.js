@@ -118,7 +118,7 @@ async function publishHtml5 (ctx) {
   const { cfg, author, aemToken, deps } = ctx
   const warnings = []
   const warn = (code, message) => { warnings.push({ code, message }); if (ctx.logger) ctx.logger.warn(`${code}: ${message}`) }
-  const paths = h.campaignPaths(cfg, ctx.campaign, ctx.template)
+  const paths = h.campaignPaths(cfg, ctx.campaign, ctx.template, ctx.animationStyle)
   const pages = []
   const manifest = ctx.manifest || {}
   const pm = h.pagemapHtml5(ctx.pagemapText).filter((p) => p.html5)
@@ -204,7 +204,7 @@ async function publishHtml5 (ctx) {
     const path = paths.pagePath(p.pagename)
     try {
       const authored = h.readDaPage(await daGet(cfg, ctx.daToken, `${path}.html`))
-      const layers = h.layersFromManifest(page, { sliceUrl: (s) => sliceUrls.get(s.name) || '', pagemapMotion: p.motion, authored, text: cfg.text })
+      const layers = h.layersFromManifest(page, { sliceUrl: (s) => sliceUrls.get(s.name) || '', pagemapMotion: p.motion, authored, text: cfg.text, animationStyle: ctx.animationStyle, duration: p.duration })
       const html = h.daPageHtml({ width: page.width, height: page.height, duration: p.duration, loops: p.loops, rowsPath: paths.rowsPath, layers })
       await daPut(cfg, ctx.daToken, `${path}.html`, html, 'text/html')
       await edsPreview(cfg, ctx.edsToken, path, ctx.edsBearer)

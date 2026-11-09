@@ -48,6 +48,8 @@ test('buildAds narrows by pages and rows', () => {
 test('buildAds puts ads under the template sub-folder', () => {
   const ads = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale', template: 'United Summer.indd', pages: ['Half_300x600'], rows: ['Summer'] })
   expect(ads[0].path).toBe('/ads/united-summer/spring-sale/half-300x600')
+  const styled = pkg.buildAds({ pagemapText: PAGEMAP, csvText: CSV, cfg: daConfig({ DA_ORG: 'pnamadobe', DA_SITE: 'banner-ads' }), campaign: 'Spring Sale', template: 'United Summer.indd', animationStyle: 'retail', pages: ['Half_300x600'], rows: ['Summer'] })
+  expect(styled[0].path).toBe('/ads/united-summer/spring-sale/retail/half-300x600')
 })
 
 test('expectedNames and mimeFor', () => {

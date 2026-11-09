@@ -97,6 +97,20 @@ test('publishHtml5 happy path writes the sheet, the slices into DA beside the pa
   expect(JSON.parse(sheetBody).data[0].hero).toBe('https://delivery-p1-e2.adobeaemcloud.com/adobe/assets/urn:aaid:aem:hero.jpg/as/hero.jpg')
 })
 
+test('publishHtml5 puts pages and sheet under the chosen animationStyle subfolder', async () => {
+  const calls = mockFetch([[/metadata\.json/, ok({ 'dam:status': 'approved' })], [/GET https:\/\/admin\.da\.live/, status(404)]])
+  const r = await da.publishHtml5(ctx({ animationStyle: 'luxury', pagemapText: 'pagenumber,pagename,html5\n1,MedRect_300x250,yes\n' }))
+  expect(r.warnings).toEqual([])
+  expect(r.pages).toEqual([{ page: 'MedRect_300x250', path: '/ads/spring/luxury/medrect-300x250', previewUrl: 'https://main--banner-ads--pnamadobe.aem.page/ads/spring/luxury/medrect-300x250', rows: 1 }])
+  const puts = calls.filter((x) => x.method === 'PUT' && /admin\.da\.live/.test(x.url))
+  expect(puts.map((x) => x.url)).toEqual([
+    'https://admin.da.live/source/pnamadobe/banner-ads/ads/spring/luxury/variations.json',
+    'https://admin.da.live/source/pnamadobe/banner-ads/ads/spring/luxury/.medrect-300x250/static-0.png',
+    'https://admin.da.live/source/pnamadobe/banner-ads/ads/spring/luxury/medrect-300x250.html'
+  ])
+  expect(puts[2].opts.body.toString()).toContain('fadeDown@0.45/0.9')
+})
+
 test('publishHtml5 leaves a sheet edited in DA alone', async () => {
   const edited = { ':type': 'sheet', data: [{ outputFileName: 'Spring', headline: 'Edited in DA' }] }
   const calls = mockFetch([[/metadata\.json/, ok({ 'dam:status': 'approved' })], [/GET .*variations\.json/, ok(edited)], [/GET https:\/\/admin\.da\.live/, status(404)]])

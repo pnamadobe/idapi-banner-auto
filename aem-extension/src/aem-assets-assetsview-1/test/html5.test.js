@@ -142,6 +142,48 @@ test('the site comes only from html5.json; campaignPaths', () => {
   const t = h.campaignPaths(cfg, 'Spring Sale 2026!', 'United Summer.indd')
   expect(t.pagePath('MedRect_300x250')).toBe('/ads/united-summer/spring-sale-2026/medrect-300x250')
   expect(t.rowsPath).toBe('/ads/united-summer/spring-sale-2026/variations.json')
+
+  // a sub-folder per animation style under the campaign
+  const styled = h.campaignPaths(cfg, 'Spring Sale 2026!', 'United Summer.indd', 'kinetic')
+  expect(styled.base).toBe('/ads/united-summer/spring-sale-2026/kinetic')
+  expect(styled.pagePath('MedRect_300x250')).toBe('/ads/united-summer/spring-sale-2026/kinetic/medrect-300x250')
+  expect(styled.rowsPath).toBe('/ads/united-summer/spring-sale-2026/kinetic/variations.json')
+  expect(styled.previewUrl('MedRect_300x250', 'Spring A')).toBe('https://main--banner-ads--teammate.aem.page/ads/united-summer/spring-sale-2026/kinetic/medrect-300x250?v=Spring%20A')
+})
+
+test('whole-banner animation styles assign distinct choreographies and respect overrides', () => {
+  expect(h.ANIMATION_STYLES.map((s) => s.id)).toEqual(['editorial', 'luxury', 'kinetic', 'retail', 'wipe', 'minimal'])
+  expect(h.normalizeAnimationStyle('LUXURY')).toBe('luxury')
+  expect(h.normalizeAnimationStyle('unknown')).toBe('editorial')
+  expect(h.normalizeAnimationStyle('')).toBe('editorial')
+
+  const page = {
+    width: 300,
+    height: 250,
+    slices: [{ name: 'static-0', file: 's0.png', z: 0 }],
+    elements: [
+      { label: 'hero', kind: 'image', box: { x: 0, y: 0, w: 300, h: 250 }, z: 1 },
+      { label: 'kicker', kind: 'text', box: { x: 16, y: 100, w: 200, h: 20 }, style: { size: 14 }, z: 2 },
+      { label: 'headline', kind: 'text', box: { x: 16, y: 130, w: 268, h: 48 }, style: { size: 22 }, z: 3 },
+      { label: 'cta', kind: 'text', box: { x: 16, y: 206, w: 120, h: 28 }, style: { button: true }, z: 4 }
+    ]
+  }
+  const byStyle = (style, extra = {}) => Object.fromEntries(
+    h.layersFromManifest(page, { animationStyle: style, duration: 6, ...extra }).map((l) => [l.name, l.motion])
+  )
+  expect(byStyle('editorial')).toEqual({ 'static-0': '', hero: 'kenburns', kicker: 'fadeUp@0.3/0.5', headline: 'fadeUp@0.6/0.5', cta: 'pulse@0.9/1' })
+  expect(byStyle('luxury')).toEqual({ 'static-0': '', hero: 'kenburns', kicker: 'fadeDown@0.45/0.9', headline: 'fade@0.9/0.9', cta: 'fade@1.35/0.9' })
+  expect(byStyle('kinetic')).toEqual({ 'static-0': '', hero: 'zoomIn@0/0.4', kicker: 'slideLeft@0.18/0.35', headline: 'slideRight@0.36/0.35', cta: 'pulse@0.54/0.7' })
+  expect(byStyle('retail')).toEqual({ 'static-0': '', hero: 'zoomIn@0/0.5', kicker: 'zoomIn@0.25/0.45', headline: 'fadeDown@0.5/0.45', cta: 'pulse@0.75/1.2' })
+  expect(byStyle('wipe')).toEqual({ 'static-0': '', hero: 'wipe@0/0.6', kicker: 'wipe@0.25/0.5', headline: 'wipe@0.5/0.5', cta: 'wipe@0.75/0.5' })
+  expect(byStyle('minimal')).toEqual({ 'static-0': '', hero: 'fade@0/0.4', kicker: 'fade@0.35/0.4', headline: 'fade@0.7/0.4', cta: 'fade@1.05/0.4' })
+
+  // Explicit pagemap and authored motion still win over the style choreography
+  expect(byStyle('kinetic', { pagemapMotion: { headline: 'wipe@0.4' }, authored: { cta: 'fade@1' } })).toMatchObject({
+    kicker: 'slideLeft@0.18/0.35',
+    headline: 'wipe@0.4',
+    cta: 'fade@1'
+  })
 })
 
 test('pagemap without an html5 column opts every page in', () => {

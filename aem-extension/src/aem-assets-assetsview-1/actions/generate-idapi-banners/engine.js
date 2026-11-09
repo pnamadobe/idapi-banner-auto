@@ -911,6 +911,7 @@ async function processBatch (params, job, state) {
           folder,
           campaign: folder.split('/').pop(),
           template: c.template.name,
+          animationStyle: params.animationStyle || (job && job.animationStyle) || html5.DEFAULT_ANIMATION_STYLE,
           manifest: html5Manifest,
           pagemapText: pagemapBuf.toString('utf8'),
           csvText: fullVarText,

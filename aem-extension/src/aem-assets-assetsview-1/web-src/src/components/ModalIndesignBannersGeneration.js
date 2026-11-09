@@ -45,6 +45,16 @@ async function deterministicJobId(folder, mode, template) {
 
 const MAX_SHOWN_FINDINGS = 10;
 
+const ANIMATION_STYLES = [
+  { id: 'editorial', label: 'Subtle / Editorial (Airlines, financial services, healthcare, B2B)' },
+  { id: 'luxury', label: 'Luxury / Cinematic (Hospitality, fashion, luxury retail, automotive)' },
+  { id: 'kinetic', label: 'Bold / Kinetic (Sports, entertainment, tech launches, events)' },
+  { id: 'retail', label: 'Retail / Promo (Sales, QSR, e-commerce, loyalty offers)' },
+  { id: 'wipe', label: 'Clean Wipe / Split (Modern SaaS, telecom, travel destinations)' },
+  { id: 'minimal', label: 'Minimal / Compliance-Safe (Pharma, regulated finance, strict brand guidelines)' },
+];
+const DEFAULT_ANIMATION_STYLE = 'editorial';
+
 // The signed-in user's IMS token, asked of the Assets View host each time (it is never stored).
 // Assets View exposes it as host.auth.getIMSInfo(); sharedContext 'auth' is the AEM editors' way.
 async function userToken(gc) {
@@ -55,8 +65,9 @@ async function userToken(gc) {
 }
 
 // DA folder of an HTML5 job: the job's own record, else where preflight says the pages would go.
-const html5FolderUrl = (r, estimate) => (r && r.html5Folder && r.html5Folder.daUrl)
-  || (estimate && estimate.html5Site && estimate.html5Path ? `https://da.live/#/${estimate.html5Site}${estimate.html5Path}` : '');
+const html5PathWithStyle = (base, style) => (base ? (style ? `${base}/${style}` : base) : '');
+const html5FolderUrl = (r, estimate, style) => (r && r.html5Folder && r.html5Folder.daUrl)
+  || (estimate && estimate.html5Site && estimate.html5Path ? `https://da.live/#/${estimate.html5Site}${html5PathWithStyle(estimate.html5Path, style)}` : '');
 
 // HTML5 results: EDS preview links per size, then the CM360 packaging control.
 function Html5Panel({ html5, jobId, token, folderUrl }) {
@@ -215,6 +226,7 @@ export default function ModalIndesignBannersGeneration() {
   const [html5Run, setHtml5Run] = useState(false);
   const [lastHtml5, setLastHtml5] = useState(null); // last finished HTML5 run with published pages, if any
   const [editSite, setEditSite] = useState(false);
+  const [animationStyle, setAnimationStyle] = useState(DEFAULT_ANIMATION_STYLE);
   const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): authenticates all action calls
   const authRef = useRef(null);
 
@@ -372,7 +384,10 @@ export default function ModalIndesignBannersGeneration() {
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
     const params = { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'both' || mode === 'editable' ? '1' : '' };
-    if (mode === 'html5') params.writeHtml5 = '1';
+    if (mode === 'html5') {
+      params.writeHtml5 = '1';
+      params.animationStyle = animationStyle;
+    }
     setHtml5Run(mode === 'html5');
     if (override && hasErrors) params.preflightOverride = '1';
     const token = await getToken();
@@ -495,7 +510,7 @@ export default function ModalIndesignBannersGeneration() {
             </View>
             <Text>
               <b>Generate HTML5 banners</b> publishes only the pagemap's HTML5 sizes as Document Authoring pages
-              in {estimate && estimate.html5Site ? <><b>{estimate.html5Site}</b>{estimate.html5Path ? <> under <b>{estimate.html5Path}</b></> : ''}</> : 'your EDS site'}, previewed
+              in {estimate && estimate.html5Site ? <><b>{estimate.html5Site}</b>{estimate.html5Path ? <> under <b>{html5PathWithStyle(estimate.html5Path, animationStyle)}</b></> : ''}</> : 'your EDS site'}, previewed
               on EDS (no flattened images; run <b>Generate banners</b> for those). Package them for CM360 afterwards.
             </Text>
             {estimate && !estimate.html5SiteError && estimate.html5Site && !editSite && (
@@ -516,6 +531,18 @@ export default function ModalIndesignBannersGeneration() {
                 onSaved={async () => { await inspect(); setEditSite(false); }}
                 onCancel={editSite ? () => setEditSite(false) : null}
               /></>
+            )}
+            {(!estimate || (!estimate.html5SiteError && !editSite)) && (
+              <Picker
+                label="Animation style"
+                selectedKey={animationStyle}
+                onSelectionChange={(k) => k && setAnimationStyle(String(k))}
+                width="100%"
+              >
+                {ANIMATION_STYLES.map((s) => (
+                  <Item key={s.id}>{s.label}</Item>
+                ))}
+              </Picker>
             )}
             {!estimate && !estimateError && <Text>Inspecting the CSV and page map…</Text>}
             {error && <Text><b>{error}</b></Text>}
@@ -547,7 +574,7 @@ export default function ModalIndesignBannersGeneration() {
               <Text>
                 Your HTML5 banners are being published as Document Authoring pages
                 in <b>{(result && result.html5Folder && result.html5Folder.site) || (estimate && estimate.html5Site) || 'your EDS site'}</b>
-                {((result && result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path)) ? <> under <b>{(result && result.html5Folder && result.html5Folder.path) || estimate.html5Path}</b></> : ''}, previewed on EDS, in a few minutes.
+                {((result && result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path)) ? <> under <b>{(result && result.html5Folder && result.html5Folder.path) || html5PathWithStyle(estimate.html5Path, animationStyle)}</b></> : ''}, previewed on EDS, in a few minutes.
                 Keep this dialog open to get the preview links and the <b>Package for CM360</b> button, or close it and reopen <b>Generate Banners</b> on this template later: it opens on the finished run, ready to package.
               </Text>
             ) : (
@@ -565,8 +592,8 @@ export default function ModalIndesignBannersGeneration() {
                 </Flex>
               </View>
             )}
-            {html5Run && html5FolderUrl(result, estimate) && (
-              <Text><a href={html5FolderUrl(result, estimate)} target="_blank" rel="noopener noreferrer">Open the HTML5 folder in Document Authoring ↗</a></Text>
+            {html5Run && html5FolderUrl(result, estimate, animationStyle) && (
+              <Text><a href={html5FolderUrl(result, estimate, animationStyle)} target="_blank" rel="noopener noreferrer">Open the HTML5 folder in Document Authoring ↗</a></Text>
             )}
             {!html5Run && result && result.outputUrl && (
               <Text><a href={result.outputUrl} target="_blank" rel="noopener noreferrer">Open the output folder in Assets View ↗</a></Text>
@@ -612,7 +639,7 @@ export default function ModalIndesignBannersGeneration() {
                   ? `This folder already has a completed job with ${result.count} recorded output(s). No new render was started.`
                   : 'The generation completed successfully.'}
               {result.writeHtml5
-                ? <>{' '}Pages are in Document Authoring under <b>{(result.html5Folder && result.html5Folder.path) || (estimate && estimate.html5Path) || 'your EDS site'}</b> (image slices in <b>{result.outputFolder}/html5</b>).</>
+                ? <>{' '}Pages are in Document Authoring under <b>{(result.html5Folder && result.html5Folder.path) || html5PathWithStyle(estimate && estimate.html5Path, result.animationStyle || animationStyle) || 'your EDS site'}</b> (image slices in <b>{result.outputFolder}/html5</b>).</>
                 : <>{' '}Written to <b>{result.outputFolder}</b> — unpublished; review before publishing.</>}
             </Text>
             {!result.writeHtml5 && result.outputUrl && (
@@ -628,7 +655,7 @@ export default function ModalIndesignBannersGeneration() {
             )}
             {/* The HTML5 panel (sizes, DA link, Package for CM360) only after an HTML5 run that published pages. */}
             {result.writeHtml5 && result.html5 && (result.html5.pages || []).length > 0
-              ? <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} folderUrl={html5FolderUrl(result, estimate)} />
+              ? <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} folderUrl={html5FolderUrl(result, estimate, result.animationStyle || animationStyle)} />
               : result.writeHtml5 && (
                 <Text>
                   No HTML5 pages were published for this job.
@@ -642,7 +669,7 @@ export default function ModalIndesignBannersGeneration() {
             )}
             <ButtonGroup>
               {result.found && <Button variant="secondary" onPress={() => { setResult(null); setHtml5Run(false); setError(''); setStatus('idle'); }}>Back</Button>}
-              {result.found && <Button variant="secondary" onPress={() => { setResult(null); setError(''); setStatus('html5-confirm'); }}>Generate again</Button>}
+              {(result.found || result.writeHtml5) && <Button variant="secondary" onPress={() => { setResult(null); setError(''); setStatus('html5-confirm'); }}>Generate again</Button>}
               <Button variant="accent" onPress={close}>Close</Button>
             </ButtonGroup>
           </Flex>

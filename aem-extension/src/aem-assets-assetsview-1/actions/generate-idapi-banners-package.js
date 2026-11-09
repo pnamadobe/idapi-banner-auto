@@ -100,6 +100,7 @@ async function main (params) {
       cfg,
       campaign: job.folder.split('/').pop(),
       template: c.template ? c.template.name : job.template,
+      animationStyle: job.animationStyle || (job.html5Folder && job.html5Folder.animationStyle) || undefined,
       pages: list(params.pages),
       rows: list(params.rows)
     })

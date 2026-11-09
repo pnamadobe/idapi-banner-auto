@@ -379,8 +379,8 @@ the Assets Author API), the job still succeeds and the reason is returned as
 ## HTML5 banners and CM360 zips
 
 **An InDesign template is now enough to ship animated HTML5 banners.** The same template can also produce **animated HTML5 ads**. Pages marked `html5` in the page map are exported by
-the InDesign API as live layers (labelled text and images) over transparent PNG slices. The extension writes one
-Edge Delivery Services page per size and a variations sheet into Document Authoring, so every size × row has a
+the InDesign API as live layers (labelled text and images) over transparent PNG slices. In the HTML5 confirmation dialog, choose from 6 whole-banner **Animation styles** (`editorial`, `luxury`, `kinetic`, `retail`, `wipe`, `minimal`); the extension writes one
+Edge Delivery Services page per size and a variations sheet into Document Authoring under `/ads/<template>/<campaign>/<style>`, so every size × row has a
 live preview URL. **Package for CM360** then runs a GitHub Actions workflow in your site repo that builds a
 CM360-ready zip, a GIF preview and a storyboard for each ad, and writes them back to `output/html5/cm360`.
 
