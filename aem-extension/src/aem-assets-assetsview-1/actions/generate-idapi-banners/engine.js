@@ -444,10 +444,12 @@ function findPreflightText (v, depth = 0) {
   return ''
 }
 async function indesignPoll (p, tok, statusUrl) {
+  let lastSt = 'unknown'
   for (let n = 0; n < 120; n++) {
     await new Promise((r) => setTimeout(r, 4000))
     const s = await (await fetch(statusUrl, { headers: idH(p, tok) })).json()
     const st = (s.status || '').toLowerCase()
+    if (st) lastSt = st
     if (['succeeded', 'completed', 'success', 'done'].includes(st)) {
       let page = s, out = []
       for (;;) {
@@ -464,7 +466,7 @@ async function indesignPoll (p, tok, statusUrl) {
       throw new Error(`render ${st}: ${JSON.stringify(s.errors || s)}`)
     }
   }
-  throw new Error('render poll timeout')
+  throw new Error(`render poll timeout (last status: ${lastSt})`)
 }
 // Remap an output INDD's local image links to AEM URLs (POST /v3/remap-links).
 // Returns { buf, warnings }. targetDocument's documented shape is a string; the
