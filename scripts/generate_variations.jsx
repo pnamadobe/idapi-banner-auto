@@ -251,10 +251,18 @@
             var frame = U.findByLabel(pg, role);
             if (!frame) { warn.push(pageName + ": no '" + role + "' frame"); return; }
             // A value that names an existing image file swaps the picture; anything
-            // else is treated as text for a text frame.
+            // else is treated as text for a text frame. If the target is a graphic
+            // frame (not a TextFrame), never fall through to setText() on a missing
+            // image, or tf.texts[0] would throw on the graphic item.
             var image = U.shot(value);
             if (image.exists) {
                 setImage(pg, pageName, role, value);
+                return;
+            }
+            var isTextFrame = false;
+            try { isTextFrame = (frame.constructor.name === "TextFrame" || (frame.texts && frame.texts.length > 0)); } catch (eTf) {}
+            if (!isTextFrame || resolveImageTarget(frame).graphic) {
+                warn.push(pageName + ": " + role + " image missing '" + value + "'");
                 return;
             }
             setText(pg, pageName, role, value);

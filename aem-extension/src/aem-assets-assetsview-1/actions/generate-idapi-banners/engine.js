@@ -44,9 +44,10 @@ async function aemTokenFromServiceCredential (scB64) {
 }
 
 // ---- AEM Assets helpers (use the caller's IMS token) ----
+const encodePath = (p) => String(p || '').split('/').map(encodeURIComponent).join('/')
 function aemApiPath (author, damPath) {
   const rel = damPath.replace(/^\/content\/dam/, '').replace(/^\//, '')
-  return `${author}/api/assets/${rel}.json`
+  return `${author}/api/assets/${encodePath(rel)}.json`
 }
 async function aemList (author, token, damPath) {
   // The Assets HTTP API returns one page of entities at a time (a folder with more than
@@ -118,7 +119,8 @@ async function ensureFolder (author, token, damPath) {
   if (!res.ok && res.status !== 409) throw new Error(`create folder ${damPath} -> ${res.status}`)
 }
 async function aemUpload (author, token, folderDamPath, name, buf, mime) {
-  const initiate = () => fetch(`${author}${folderDamPath.split('/').map(encodeURIComponent).join('/')}.initiateUpload.json`, {
+  const encodedFolder = encodePath(folderDamPath)
+  const initiate = () => fetch(`${author}${encodedFolder}.initiateUpload.json`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ fileName: name, fileSize: String(buf.length) })
@@ -138,7 +140,7 @@ async function aemUpload (author, token, folderDamPath, name, buf, mime) {
     const pr = await fetch(uris[i], { method: 'PUT', body: part })
     if (!(pr.status === 201 || pr.ok)) throw new Error(`upload PUT ${name} part ${i} -> ${pr.status}`)
   }
-  const cr = await fetch(`${author}${folderDamPath}.completeUpload.json`, {
+  const cr = await fetch(`${author}${encodedFolder}.completeUpload.json`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ fileName: name, mimeType: mime || f.mimeType || 'application/octet-stream', uploadToken: f.uploadToken, fileSize: String(buf.length) })

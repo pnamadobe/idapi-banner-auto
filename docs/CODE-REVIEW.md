@@ -34,14 +34,14 @@
   - Update `ModalIndesignBannersGeneration.js` to include the signed-in user's token on all action invocations (`inspect`, `generate` in all modes, and `status`).
   - Update `e2e/generate-idapi-banners.e2e.test.js` and unit tests to cover the in-action 401/403 checks.
 
-### [ ] 2.2 Missing URL Encoding on `completeUpload` in `engine.js`
+### [x] 2.2 Missing URL Encoding on `completeUpload` in `engine.js`
 - **Locations:**
   - `aem-extension/src/aem-assets-assetsview-1/actions/generate-idapi-banners/engine.js:141`
   - `cloud/aem-render.mjs:160, 174`
 - **Finding:** In `engine.js:121`, `initiateUpload` URL-encodes each path segment of `folderDamPath` (`folderDamPath.split('/').map(encodeURIComponent).join('/')`), but `completeUpload` at line 141 interpolates raw `${author}${folderDamPath}.completeUpload.json`. If a campaign folder path contains spaces or special characters, `initiateUpload` and the binary `PUT`s succeed, and `completeUpload` fails.
 - **Remediation:** Use segment-encoded paths consistently for both `initiateUpload` and `completeUpload` (matching `html5-writeback.js:57`).
 
-### [ ] 2.3 `setField()` in `generate_variations.jsx` Calls `setText()` on Graphic Frames When an Image Is Missing
+### [x] 2.3 `setField()` in `generate_variations.jsx` Calls `setText()` on Graphic Frames When an Image Is Missing
 - **Location:** `scripts/generate_variations.jsx:249-261`
 - **Finding:** `setField()` checks `var image = U.shot(value); if (image.exists) { setImage(...); return; } setText(...);`. When running on desktop (where `preflightGate` is off) or in the cloud with `preflightOverride=1`, if a CSV cell for an image frame names a missing file, `setField()` falls through to `setText()` on a `Rectangle` / graphic frame, where `tf.texts[0]` throws and aborts the entire script run.
 - **Remediation:** Check whether the target frame is a graphic frame (`resolveImageTarget(frame).graphic` or `frame.constructor.name !== "TextFrame"`) before falling back to `setText()`, and log a missing-image warning instead of crashing.

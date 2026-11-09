@@ -50,10 +50,11 @@ const die = (m) => { console.error("✗ " + m); process.exit(1); };
 // ---------------------------------------------------------------------------
 // AEM Assets helpers
 // ---------------------------------------------------------------------------
+const encodePath = (p) => String(p || "").split("/").map(encodeURIComponent).join("/");
 function apiPath(damPath) {
   // /content/dam/foo/bar  ->  /api/assets/foo/bar.json
   const rel = damPath.replace(/^\/content\/dam/, "").replace(/^\//, "");
-  return `${AEM.author}/api/assets/${rel}.json`;
+  return `${AEM.author}/api/assets/${encodePath(rel)}.json`;
 }
 async function aemList(damPath) {
   const res = await fetch(apiPath(damPath), { headers: { Authorization: `Bearer ${AEM.token}` } });
@@ -156,8 +157,9 @@ async function indesignPoll(tok, statusUrl) {
 
 // AEM as a Cloud Service direct-binary upload (initiate → PUT → complete).
 async function aemUpload(folderDamPath, name, buf, mime) {
+  const encodedFolder = encodePath(folderDamPath);
   const initBody = new URLSearchParams({ fileName: name, fileSize: String(buf.length) });
-  const ir = await fetch(`${AEM.author}${folderDamPath}.initiateUpload.json`, {
+  const ir = await fetch(`${AEM.author}${encodedFolder}.initiateUpload.json`, {
     method: "POST", headers: { Authorization: `Bearer ${AEM.token}`, "Content-Type": "application/x-www-form-urlencoded" }, body: initBody,
   });
   if (!ir.ok) die(`initiateUpload ${name} -> ${ir.status} ${await ir.text()}`);
@@ -171,7 +173,7 @@ async function aemUpload(folderDamPath, name, buf, mime) {
     const pr = await fetch(uris[i], { method: "PUT", body: part });
     if (!(pr.status === 201 || pr.ok)) die(`upload PUT ${name} part ${i} -> ${pr.status} ${await pr.text()}`);
   }
-  const completeURI = `${AEM.author}${folderDamPath}.completeUpload.json`;
+  const completeURI = `${AEM.author}${encodedFolder}.completeUpload.json`;
   const cb = new URLSearchParams({ fileName: name, mimeType: mime || f.mimeType || "application/octet-stream", uploadToken: f.uploadToken, fileSize: String(buf.length) });
   const cr = await fetch(completeURI, { method: "POST", headers: { Authorization: `Bearer ${AEM.token}`, "Content-Type": "application/x-www-form-urlencoded" }, body: cb });
   if (!cr.ok) die(`completeUpload ${name} -> ${cr.status} ${await cr.text()}`);
