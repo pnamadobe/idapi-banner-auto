@@ -290,3 +290,27 @@ test('cleanupStaleStaging removes idapi-runs prefixes older than maxAgeMs and ke
   expect(count).toBe(1)
   expect(deleted).toEqual([`idapi-runs/${oldTs}-abc123/`])
 })
+
+test('worker automatically requeues a batch when InDesign API hits a cold-start not_started timeout (up to 2 retries)', async () => {
+  const jobId = key.slice('idapi-job-'.length)
+  mockStore.set(key, JSON.stringify({ stateKey: key, jobId, folder: FOLDER, template: TEMPLATE, writeIndd: true, writeImages: true, batchSize: 2, rowOffset: 0, outputs: [], status: 'queued' }))
+  mockBatch.mockResolvedValue({
+    error: {
+      statusCode: 500,
+      body: { error: 'generation failed: Adobe InDesign API did not start the job after 360 seconds (queue status: not_started).' }
+    }
+  })
+  const res1 = await worker.main({ jobId })
+  expect(res1.statusCode).toBe(202)
+  expect(res1.body).toMatchObject({ status: 'queued', coldStartRetries: 1 })
+  expect(global.fetch).toHaveBeenCalledTimes(1)
+
+  const res2 = await worker.main({ jobId })
+  expect(res2.statusCode).toBe(202)
+  expect(res2.body).toMatchObject({ status: 'queued', coldStartRetries: 2 })
+
+  // After 2 cold-start retries, a 3rd failure marks the job failed
+  const res3 = await worker.main({ jobId })
+  expect(res3.error.statusCode).toBe(500)
+  expect(JSON.parse(mockStore.get(key)).status).toBe('failed')
+})

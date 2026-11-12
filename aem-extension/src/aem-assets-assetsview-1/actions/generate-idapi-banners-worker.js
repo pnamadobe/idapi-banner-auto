@@ -84,6 +84,7 @@ async function main (params) {
       return { statusCode: 200, body: job }
     }
     job.rowOffset += rows
+    delete job.coldStartRetries
     if (rows < job.batchSize) {
       job.status = 'completed'
       delete job.phase
@@ -111,9 +112,23 @@ async function main (params) {
   } catch (error) {
     const current = await state.get(stateKey)
     const job = current ? JSON.parse(current.value) : { jobId }
+    const cleanMsg = String(error.message || '').replace(/^(generation failed:\s*)+/i, '')
+    // If the InDesign API was cold-booting a VM and stayed in not_started / poll timeout, automatically
+    // requeue the batch (up to 2 times) onto a fresh worker activation instead of failing the job.
+    if (/not_started|render poll timeout/i.test(cleanMsg) && (job.coldStartRetries || 0) < 2) {
+      job.coldStartRetries = (job.coldStartRetries || 0) + 1
+      job.status = 'queued'
+      job.phase = `InDesign API instance warmed up — starting render (retry ${job.coldStartRetries}/2)…`
+      job.queuedAt = job.updatedAt = new Date().toISOString()
+      await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+      await state.delete(lockKey)
+      try {
+        await invokeWorker({ jobId: job.jobId, ...(params.daUserToken ? { daUserToken: params.daUserToken } : {}) })
+      } catch (e) { console.warn(`cold-start requeue invoke: ${e.message}`) }
+      return { statusCode: 202, body: job }
+    }
     job.status = 'failed'
     delete job.phase
-    const cleanMsg = String(error.message || '').replace(/^(generation failed:\s*)+/i, '')
     job.error = `generation failed: ${cleanMsg}`
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
     if (context) await saveManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })

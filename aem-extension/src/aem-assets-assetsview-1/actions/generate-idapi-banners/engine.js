@@ -367,6 +367,21 @@ async function probeImages (author, token, resolved) {
   await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, paths.length) }, worker))
   return probes
 }
+// Best-effort, non-blocking warmup ping fired during stage-1 preflight for .indd templates.
+// Sending an empty job wakes a scaled-to-zero Azure CXP Windows InDesign Server VM while the
+// user is still reading the modal, shaving minutes off cold-start queue wait times.
+async function warmupIndesign (params) {
+  if (!params || !params.FFS_CLIENT_ID || !params.FFS_CLIENT_SECRET || !params.INDESIGN_EXECUTE_URL) return
+  try {
+    const tok = await imsToken(params)
+    await fetch(params.INDESIGN_EXECUTE_URL, {
+      method: 'POST',
+      headers: { ...idH(params, tok), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assets: [], params: {} })
+    })
+  } catch (e) { /* non-fatal warmup */ }
+}
+
 // Stage-1 preflight: everything decidable from the job folder alone, with no render started.
 // Never throws for a problem with the inputs; those come back as findings ({ ok, findings, ... }).
 async function inspectInputs (params) {
@@ -377,6 +392,10 @@ async function inspectInputs (params) {
   if (missing.length) {
     const r = missingInputs(missingMessage(missing, params.template))
     return { variationRows: 0, pageCount: 0, template: c.template ? c.template.name : '', variations: c.variations ? c.variations.name : '', pagemap: c.pagemap ? c.pagemap.name : '', ...r }
+  }
+  if (!isPsd(c.template.name)) {
+    // Wake the InDesign API worker pool in parallel with the AEM preflight downloads (bounded to 1.5s)
+    Promise.race([warmupIndesign(params), sleep(1500)]).catch(() => {})
   }
   const [variationsBuf, pagemapBuf] = await Promise.all([
     aemDownload(author, aemToken, `${params.folder}/${c.variations.name}`),
@@ -530,8 +549,7 @@ async function submitIndesignJob (p, tok, assets, renderParams) {
 }
 async function indesignRender (p, tok, assets, renderParams, onStatus) {
   const statusUrl = await submitIndesignJob(p, tok, assets, renderParams)
-  const resubmit = () => submitIndesignJob(p, tok, assets, renderParams)
-  const { outputs, status } = await indesignPoll(p, tok, statusUrl, onStatus, resubmit)
+  const { outputs, status } = await indesignPoll(p, tok, statusUrl, onStatus)
   // The script's dataURL file (result.json) comes back in the status response, not as an upload.
   outputs.data = renderData(status)
   outputs.statusKeys = Object.keys(status || {}) // names only, for diagnostics
@@ -557,46 +575,29 @@ function findPreflightText (v, depth = 0) {
   for (const x of Object.values(v)) { const t = findPreflightText(x, depth + 1); if (t) return t }
   return ''
 }
-// Cold InDesign Server VMs on Azure CXP take ~90-150s to spin up after idle periods (staying in
-// `not_started` while booting and downloading inputs). If still `not_started` at 60s (15 polls),
-// submit a backup job and poll both so either the warming VM or a fresh queue consumer wins.
-// Fail after 180s (45 polls x 4s) if neither starts.
-const RESUBMIT_NOT_STARTED_POLLS = 15
-const MAX_NOT_STARTED_POLLS = 45
-async function indesignPoll (p, tok, statusUrl, onStatus, resubmit) {
+// When the InDesign API pool has been idle for 45+ minutes, Azure CXP scales Windows InDesign Server
+// VMs to zero; cold-booting a fresh VM + downloading staged inputs takes 3 to 4.5 minutes in `not_started`.
+// Allow up to 360s (90 polls x 4s) while heartbeating `job.updatedAt` in state every ~30s; if it still
+// hasn't started at 360s, the worker automatically requeues the batch onto a fresh activation.
+const MAX_NOT_STARTED_POLLS = 90
+async function indesignPoll (p, tok, statusUrl, onStatus) {
   let lastSt = 'unknown'
   let notStartedPolls = 0
-  const urls = [statusUrl]
   for (let n = 0; n < 120; n++) {
     await new Promise((r) => setTimeout(r, 4000))
-    let activeS = null
-    let activeSt = ''
-    for (const u of urls) {
-      const s = await (await fetch(u, { headers: idH(p, tok) })).json()
-      const st = (s.status || '').toLowerCase()
-      if (st) lastSt = st
-      activeS = s
-      activeSt = st
-      if (!['not_started', 'pending', 'queued'].includes(st)) {
-        // Lock onto the first job that moves out of not_started
-        urls.splice(0, urls.length, u)
-        break
-      }
-    }
-    const s = activeS || {}
-    const st = activeSt
+    const s = await (await fetch(statusUrl, { headers: idH(p, tok) })).json()
+    const st = (s.status || '').toLowerCase()
+    if (st) lastSt = st
     if (['not_started', 'pending', 'queued'].includes(st)) {
       notStartedPolls++
-      if (onStatus && notStartedPolls === 3) await onStatus('Waiting for Adobe InDesign API queue (warming up)…')
-      if (notStartedPolls === RESUBMIT_NOT_STARTED_POLLS && typeof resubmit === 'function' && urls.length === 1) {
-        try {
-          if (onStatus) await onStatus('InDesign API still warming up — submitting backup queue request…')
-          const backupUrl = await resubmit()
-          if (backupUrl && !urls.includes(backupUrl)) urls.push(backupUrl)
-        } catch (e) { /* keep polling original statusUrl */ }
+      if (onStatus && (notStartedPolls === 3 || notStartedPolls % 8 === 0)) {
+        const elapsedSec = notStartedPolls * 4
+        await onStatus(`Waiting for Adobe InDesign API cloud instance to warm up (${elapsedSec}s elapsed)…`)
       }
       if (notStartedPolls >= MAX_NOT_STARTED_POLLS) {
-        throw new Error('Adobe InDesign API did not start the job after 180 seconds (queue status: not_started). The InDesign API service may be experiencing a queue backlog or outage — please try again in a few minutes.')
+        const err = new Error('Adobe InDesign API did not start the job after 360 seconds (queue status: not_started). The InDesign API service may be experiencing a queue backlog or outage — please try again in a few minutes.')
+        err.retryableColdStart = true
+        throw err
       }
       continue
     }
@@ -666,15 +667,16 @@ async function psToken (p) {
 }
 const psH = (p, tok) => ({ Authorization: `Bearer ${tok}`, 'x-api-key': p.FFS_CLIENT_ID, 'Content-Type': 'application/json' })
 // Submit a v2 job and poll /v2/status until it finishes. Returns the final status body.
-// Transient failures (the service fetching one of our presigned URLs, gateway blips) are retried.
+// Transient failures (429 rate limits, presigned URL fetch blips, 502/503/504 gateway errors) are retried with backoff.
 async function psJob (p, tok, path, body) {
-  const transient = /External download failed|\b50[234]\b|timeout|temporarily/i
+  const transient = /External download failed|\b429\b|\b50[234]\b|rate[_ ]?limit|timeout|temporarily/i
+  const isRateLimit = (msg) => /\b429\b|rate[_ ]?limit/i.test(msg)
   for (let attempt = 1; ; attempt++) {
     try {
       return await psJobOnce(p, tok, path, body)
     } catch (e) {
-      if (attempt >= 3 || !transient.test(e.message)) throw e
-      await sleep(5000 * attempt)
+      if (attempt >= 5 || !transient.test(e.message)) throw e
+      await sleep((isRateLimit(e.message) ? 12000 : 5000) * attempt)
     }
   }
 }
