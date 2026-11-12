@@ -226,3 +226,67 @@ test('hasFolderAccess verifies HEAD on the AEM folder using the caller token onl
   await expect(hasFolderAccess({ AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com' }, '', '/content/dam/acme/camp')).resolves.toBe(false)
   await expect(hasFolderAccess({ AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com' }, 'caller-tok', '/content/dam/../etc')).resolves.toBe(false)
 })
+
+test('aemAuthor enforces same-program isolation by default and supports ALLOWED_AEM_AUTHORS', () => {
+  const { aemAuthor, isTrustedSliceUrl } = jest.requireActual('../actions/generate-idapi-banners/engine')
+  const base = { AEM_AUTHOR_URL: 'https://author-p100-e200.adobeaemcloud.com' }
+  // Same Cloud Manager program (p100) across dev/stage/prod is allowed
+  expect(aemAuthor({ ...base, aemAuthorUrl: 'https://author-p100-e999.adobeaemcloud.com' }))
+    .toBe('https://author-p100-e999.adobeaemcloud.com')
+  // Different program (p999) is rejected unless explicitly allowlisted
+  expect(() => aemAuthor({ ...base, aemAuthorUrl: 'https://author-p999-e1.adobeaemcloud.com' }))
+    .toThrow(/not allowed/)
+  expect(aemAuthor({ ...base, ALLOWED_AEM_AUTHORS: 'p999', aemAuthorUrl: 'https://author-p999-e1.adobeaemcloud.com' }))
+    .toBe('https://author-p999-e1.adobeaemcloud.com')
+
+  expect(isTrustedSliceUrl('https://admin.da.live/org/site/p/static-0.png')).toBe(true)
+  expect(isTrustedSliceUrl('https://main--site--org.aem.page/p/static-0.png')).toBe(true)
+  expect(isTrustedSliceUrl('https://delivery-p1-e2.adobeaemcloud.com/adobe/assets/urn:aaid:aem:1/as/x.png')).toBe(true)
+  expect(isTrustedSliceUrl('https://evil.example.com/slice.png')).toBe(false)
+  expect(isTrustedSliceUrl('http://admin.da.live/slice.png')).toBe(false)
+})
+
+test('aemContext mints an OAuth S2S token when AEM_OAUTH_CLIENT_ID and AEM_OAUTH_CLIENT_SECRET are configured', async () => {
+  const { aemContext } = jest.requireActual('../actions/generate-idapi-banners/engine')
+  global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ access_token: 'oauth-s2s-tok' }) }))
+  const ctx = await aemContext({
+    AEM_AUTHOR_URL: 'https://author-p1-e2.adobeaemcloud.com',
+    AEM_OAUTH_CLIENT_ID: 'cid',
+    AEM_OAUTH_CLIENT_SECRET: 'csec',
+    IMS_ENDPOINT: 'https://ims.example/token'
+  })
+  expect(ctx).toEqual({ author: 'https://author-p1-e2.adobeaemcloud.com', aemToken: 'oauth-s2s-tok' })
+  expect(global.fetch).toHaveBeenCalledWith('https://ims.example/token', expect.objectContaining({ method: 'POST' }))
+})
+
+test('fetchWithRetry retries 429 Too Many Requests and honors Retry-After', async () => {
+  const { fetchWithRetry } = jest.requireActual('../actions/generate-idapi-banners/engine')
+  let attempts = 0
+  global.fetch = jest.fn(async () => {
+    attempts++
+    if (attempts === 1) return { ok: false, status: 429, headers: { get: (h) => (h === 'retry-after' ? '0.01' : null) } }
+    return { ok: true, status: 200 }
+  })
+  const res = await fetchWithRetry('https://api.example/x', {}, { retries: 2, baseDelayMs: 5 })
+  expect(res.status).toBe(200)
+  expect(attempts).toBe(2)
+})
+
+test('cleanupStaleStaging removes idapi-runs prefixes older than maxAgeMs and keeps fresh ones', async () => {
+  const { cleanupStaleStaging } = jest.requireActual('../actions/generate-idapi-banners/engine')
+  const now = 1794510000000
+  const oldTs = now - 3 * 3600 * 1000
+  const freshTs = now - 5 * 60 * 1000
+  const deleted = []
+  const fakeFiles = {
+    list: async () => [
+      { name: `idapi-runs/${oldTs}-abc123/template/brand-template.indd` },
+      { name: `idapi-runs/${oldTs}-abc123/input/pagemap.csv` },
+      { name: `idapi-runs/${freshTs}-def456/template/brand-template.indd` }
+    ],
+    delete: async (p) => { deleted.push(p) }
+  }
+  const count = await cleanupStaleStaging(fakeFiles, now)
+  expect(count).toBe(1)
+  expect(deleted).toEqual([`idapi-runs/${oldTs}-abc123/`])
+})

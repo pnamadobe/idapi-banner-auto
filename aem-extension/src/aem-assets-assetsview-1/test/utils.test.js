@@ -113,4 +113,22 @@ describe('getBearerToken', () => {
     expect(utils.userBearer({ userToken: '  body-tok  ' })).toBe('body-tok')
     expect(utils.userBearer({ userToken: 'body-tok', __ow_headers: { authorization: 'Bearer hdr-tok' } })).toBe('hdr-tok')
   })
+
+  test('userImsOrg and isAllowedImsOrg validate IMS Organization IDs', () => {
+    expect(utils.userImsOrg({})).toBeUndefined()
+    expect(utils.userImsOrg({ imsOrg: 'not-an-org' })).toBeUndefined()
+    expect(utils.userImsOrg({ __ow_headers: { 'x-gw-ims-org-id': '12345678@AdobeOrg' } })).toBe('12345678@AdobeOrg')
+    expect(utils.userImsOrg({ imsOrg: '9999@AdobeOrg' })).toBe('9999@AdobeOrg')
+    expect(utils.isAllowedImsOrg({})).toBe(true)
+    expect(utils.isAllowedImsOrg({ ALLOWED_IMS_ORGS: '111@AdobeOrg, 222@AdobeOrg', imsOrg: '222@adobeorg' })).toBe(true)
+    expect(utils.isAllowedImsOrg({ ALLOWED_IMS_ORGS: '111@AdobeOrg', imsOrg: '999@AdobeOrg' })).toBe(false)
+  })
+
+  test('initState passes region only when AIO_STATE_REGION is valid', async () => {
+    const fakeState = { init: jest.fn(async () => ({})) }
+    await utils.initState(fakeState, {})
+    expect(fakeState.init).toHaveBeenLastCalledWith()
+    await utils.initState(fakeState, { AIO_STATE_REGION: 'emea' })
+    expect(fakeState.init).toHaveBeenLastCalledWith({ region: 'emea' })
+  })
 })

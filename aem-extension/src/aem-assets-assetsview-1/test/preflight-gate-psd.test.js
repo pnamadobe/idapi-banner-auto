@@ -2,6 +2,7 @@
  * PSD stage-2 gate: the template-aware checks run on the first batch, after the manifest is read
  * and before any create-composite call (the paid render). Every network call is faked.
  */
+const mockFilesDelete = jest.fn(async () => {})
 jest.mock('@adobe/aio-sdk', () => ({
   Core: { Logger: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }) }
 }))
@@ -9,7 +10,7 @@ jest.mock('@adobe/aio-lib-files', () => ({
   init: async () => ({
     write: async () => {},
     generatePresignURL: async (remote) => `https://files.example/${remote}`,
-    delete: async () => {}
+    delete: (...args) => mockFilesDelete(...args)
   })
 }))
 
@@ -68,6 +69,7 @@ const composites = () => calls.filter((u) => u.endsWith('/v2/create-composite'))
 
 beforeEach(() => {
   calls = []
+  mockFilesDelete.mockClear()
   jest.spyOn(global, 'setTimeout').mockImplementation((fn) => { fn(); return 0 })
 })
 afterEach(() => jest.restoreAllMocks())
@@ -85,6 +87,8 @@ test('a pagemap naming an artboard the PSD lacks fails before any composite call
   expect(j.findings.map((f) => f.code)).toContain('PSD_PAGEMAP_MISSING')
   expect(state.put).toHaveBeenCalledTimes(1)
   expect(JSON.parse(state.put.mock.calls[0][1]).findings).toEqual(j.findings)
+  expect(mockFilesDelete).toHaveBeenCalledTimes(1)
+  expect(mockFilesDelete.mock.calls[0][0]).toMatch(/^idapi-runs\/[^/]+\/$/)
 })
 
 test('a CSV column with no matching layer fails the gate; preflightOverride=1 lets it through to the render', async () => {

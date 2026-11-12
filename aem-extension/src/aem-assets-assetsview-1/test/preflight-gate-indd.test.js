@@ -3,6 +3,7 @@
  * fonts, links, missing images) on the first batch and reports "PREFLIGHT:[...]" as its failure, or
  * echoes warnings in result.json. Every network call is faked.
  */
+const mockFilesDelete = jest.fn(async () => {})
 jest.mock('@adobe/aio-sdk', () => ({
   Core: { Logger: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }) }
 }))
@@ -10,7 +11,7 @@ jest.mock('@adobe/aio-lib-files', () => ({
   init: async () => ({
     write: async () => {},
     generatePresignURL: async (remote) => `https://files.example/${remote}`,
-    delete: async () => {}
+    delete: (...args) => mockFilesDelete(...args)
   })
 }))
 
@@ -73,6 +74,7 @@ const job = () => ({ stateKey: 'idapi-job-abc', jobId: 'abc', outputFolder: `${F
 beforeEach(() => {
   calls = []
   execBodies = []
+  mockFilesDelete.mockClear()
   jest.spyOn(global, 'setTimeout').mockImplementation((fn) => { fn(); return 0 })
 })
 afterEach(() => jest.restoreAllMocks())
@@ -90,6 +92,8 @@ test('a PREFLIGHT failure from the capability becomes job findings and a readabl
   expect(j.findings[0]).toMatchObject({ severity: 'error', row: 2, column: 'hero' })
   expect(JSON.parse(state.put.mock.calls[0][1]).findings).toEqual(j.findings)
   expect(calls.some((u) => u.startsWith(AUTHOR) && u.includes('/output'))).toBe(false)
+  expect(mockFilesDelete).toHaveBeenCalledTimes(1)
+  expect(mockFilesDelete.mock.calls[0][0]).toMatch(/^idapi-runs\/[^/]+\/$/)
 })
 
 test('the gate is requested on the first batch, with the override only when set', async () => {

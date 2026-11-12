@@ -111,6 +111,60 @@ function userBearer (params = {}) {
   const t = getBearerToken(params) || (typeof params.userToken === 'string' ? params.userToken.trim() : '')
   return t || undefined
 }
+
+/**
+ * Extracts the caller's IMS Organization ID from request headers, parameters, or JWT bearer claims.
+ *
+ * @param {object} params action input parameters.
+ * @returns {string|undefined}
+ */
+function userImsOrg (params = {}) {
+  const hdrs = params.__ow_headers || {}
+  const raw = hdrs['x-gw-ims-org-id'] || hdrs['x-ims-org-id'] || (typeof params.imsOrg === 'string' ? params.imsOrg : '')
+  const trimmed = String(raw || '').trim()
+  if (/^[A-Za-z0-9_]+@AdobeOrg$/i.test(trimmed)) return trimmed
+  const tok = userBearer(params)
+  if (tok && tok.split('.').length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(tok.split('.')[1], 'base64').toString('utf8'))
+      const claimOrg = String(payload.org || payload.imsOrg || '').trim()
+      if (/^[A-Za-z0-9_]+@AdobeOrg$/i.test(claimOrg)) return claimOrg
+    } catch (e) { /* opaque or non-JSON token */ }
+  }
+  return undefined
+}
+
+/**
+ * Checks whether the caller's IMS Org is allowed when ALLOWED_IMS_ORGS is configured.
+ * If no org header/claim is present on the request, defers to AEM folder access check (`hasFolderAccess`);
+ * if an org is present, it must match the allowlist.
+ *
+ * @param {object} params action input parameters.
+ * @returns {boolean}
+ */
+function isAllowedImsOrg (params = {}) {
+  const allowedRaw = String(params.ALLOWED_IMS_ORGS || '').trim()
+  if (!allowedRaw) return true
+  const allowed = allowedRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+  if (!allowed.length) return true
+  const org = userImsOrg(params)
+  return !org || allowed.includes(org.toLowerCase())
+}
+
+/**
+ * Initializes @adobe/aio-lib-state, passing `{ region }` only when AIO_STATE_REGION is configured.
+ *
+ * @param {object} stateLib @adobe/aio-lib-state module
+ * @param {object} [params] action input parameters
+ * @returns {Promise<object>}
+ */
+function initState (stateLib, params = {}) {
+  const region = String(params.AIO_STATE_REGION || '').trim().toLowerCase()
+  if (region && ['amer', 'emea', 'apac', 'aus'].includes(region)) {
+    return stateLib.init({ region })
+  }
+  return stateLib.init()
+}
 /**
  *
  * Returns an error response object and attempts to log.info the status code and error message
@@ -143,6 +197,9 @@ module.exports = {
   errorResponse,
   getBearerToken,
   userBearer,
+  userImsOrg,
+  isAllowedImsOrg,
+  initState,
   stringParameters,
   checkMissingRequestInputs
 }

@@ -26,6 +26,8 @@ run_debrand.sh
 
 # Internal follow-ups (real technical-account id + personal Azure container) — keep local.
 TODO.md
+.claude/
+opencode.json
 
 # App Builder extension: source and deployment manifests are tracked.
 # Its nested .gitignore excludes credentials, local environment files, caches,

@@ -1,6 +1,6 @@
 const stateLib = require('@adobe/aio-lib-state')
 const { processBatch, aemContext, writeJobManifest, finalizeRelations } = require('./generate-idapi-banners/engine')
-const { errorResponse } = require('./utils')
+const { errorResponse, initState } = require('./utils')
 
 // The manifest is a convenience record in AEM; the job state in aio-lib-state is authoritative.
 // Back-to-back writes of the same asset can 409 while AEM is still processing the previous upload,
@@ -30,7 +30,7 @@ function signInLost (job) {
 }
 
 async function main (params) {
-  const state = await stateLib.init()
+  const state = await initState(stateLib, params)
   let context
   const jobId = String(params.jobId || '')
   if (!/^[a-f0-9]{48}$/.test(jobId)) return errorResponse(400, 'invalid jobId')
@@ -87,10 +87,15 @@ async function main (params) {
     if (rows < job.batchSize) {
       job.status = 'completed'
       delete job.phase
-      // once everything is uploaded, restore INDD -> PDF relations that AEM's own XMP-based inference replaced
+      job.updatedAt = new Date().toISOString()
+      // Persist completed state BEFORE finalizeRelations (which sleeps up to 50s waiting for AEM XMP)
+      // so a container timeout during post-processing never strands a finished job in 'running'.
+      await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
+      await saveManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: job.updatedAt })
       if (job.writeIndd) {
         try { await finalizeRelations(context.author, context.aemToken, job.outputFolder || `${job.folder}/output`, job.outputs || []) } catch (e) { console.warn(`finalizeRelations: ${e.message}`) }
       }
+      return { statusCode: 200, body: job }
     } else {
       job.status = 'queued'
       job.queuedAt = new Date().toISOString()
@@ -108,10 +113,11 @@ async function main (params) {
     const job = current ? JSON.parse(current.value) : { jobId }
     job.status = 'failed'
     delete job.phase
-    job.error = error.message
+    const cleanMsg = String(error.message || '').replace(/^(generation failed:\s*)+/i, '')
+    job.error = `generation failed: ${cleanMsg}`
     await state.put(stateKey, JSON.stringify(job), { ttl: 7 * 24 * 3600, ifExists: true })
     if (context) await saveManifest(context.author, context.aemToken, job.folder, { ...job, updatedAt: new Date().toISOString() })
-    return errorResponse(500, `generation failed: ${error.message}`)
+    return errorResponse(500, job.error)
   } finally {
     await state.delete(lockKey)
   }

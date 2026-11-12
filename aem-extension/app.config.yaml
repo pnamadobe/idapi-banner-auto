@@ -1,3 +1,81 @@
+productDependencies:
+  - code: AEM
+    minVersion: 0.0.0
+    maxVersion: 999.999.999
+
+configSchema:
+  title: 'InDesign & Photoshop Banner Automation Configuration'
+  description: 'Configure Firefly Services (InDesign & Photoshop APIs) and AEM credentials for your environment.'
+  properties:
+    - envKey: FFS_CLIENT_ID
+      type: 'string'
+      title: 'Firefly Services Client ID'
+      description: 'OAuth Server-to-Server Client ID with InDesign API and Photoshop API entitlements'
+    - envKey: FFS_CLIENT_SECRET
+      type: 'string'
+      title: 'Firefly Services Client Secret'
+      description: 'OAuth Server-to-Server Client Secret for Firefly Services'
+      secret: true
+    - envKey: FFS_ORG_ID
+      type: 'string'
+      title: 'IMS Organization ID'
+      description: 'Your Adobe IMS Organization ID (e.g. XXXXX@AdobeOrg)'
+    - envKey: INDESIGN_EXECUTE_URL
+      type: 'string'
+      title: 'InDesign Capability Execute URL (Optional)'
+      description: 'Pre-registered InDesign capability URL; if omitted, the extension registers the capability automatically on first run'
+    - envKey: AEM_AUTHOR_URL
+      type: 'string'
+      title: 'Default AEM Author URL'
+      description: 'Default AEM as a Cloud Service Author URL (e.g. https://author-p12345-e67890.adobeaemcloud.com)'
+    - envKey: ALLOWED_AEM_AUTHORS
+      type: 'string'
+      title: 'Allowed AEM Author URLs / Programs (Optional)'
+      description: 'Comma-separated list of allowed AEM Author URLs, hosts, or program prefixes (e.g. p12345)'
+    - envKey: AEM_OAUTH_CLIENT_ID
+      type: 'string'
+      title: 'AEM OAuth Server-to-Server Client ID (Recommended)'
+      description: 'OAuth S2S Client ID for durable AEM DAM background access'
+    - envKey: AEM_OAUTH_CLIENT_SECRET
+      type: 'string'
+      title: 'AEM OAuth Server-to-Server Client Secret'
+      description: 'OAuth S2S Client Secret for durable AEM DAM background access'
+      secret: true
+    - envKey: AEM_SC_JSON
+      type: 'string'
+      title: 'AEM Service Credential JSON (Base64 Fallback)'
+      description: 'Base64-encoded AEM Cloud Manager Technical Account JSON'
+      secret: true
+    - envKey: AEM_FONTS_PATH
+      type: 'string'
+      title: 'Shared DAM Fonts Path'
+      description: 'Default DAM folder containing shared brand fonts'
+      default: '/content/dam/fonts'
+    - envKey: ASSETS_VIEW_TENANT
+      type: 'string'
+      title: 'Assets View Tenant Handle (Optional)'
+      description: 'The @tenant slug in Assets View URLs (e.g. @yourorg) if not auto-detected from host'
+    - envKey: AIO_STATE_REGION
+      type: 'string'
+      title: 'State Storage Region'
+      description: 'Data residency region for job state storage'
+      enum:
+        - 'amer'
+        - 'emea'
+        - 'apac'
+        - 'aus'
+      default: 'amer'
+    - envKey: GITHUB_DISPATCH_TOKEN
+      type: 'string'
+      title: 'GitHub Dispatch Token (Optional - CM360 Packaging)'
+      description: 'Fine-grained PAT with contents:write on your packaging repository'
+      secret: true
+    - envKey: HTML5_WRITEBACK_SECRET
+      type: 'string'
+      title: 'CM360 Writeback HMAC Secret (Optional)'
+      description: 'Random secret (>= 32 chars) shared with your packaging workflow'
+      secret: true
+
 extensions:
   aem/assets/assetsview/1:
     $include: src/aem-assets-assetsview-1/ext.config.yaml

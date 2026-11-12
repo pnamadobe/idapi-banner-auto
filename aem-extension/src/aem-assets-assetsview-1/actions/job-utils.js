@@ -1,10 +1,27 @@
 const crypto = require('crypto')
 
-// One job per (folder, editable-output option, selected template). Without a template the key is the
-// legacy folder|option one, so jobs started before templates were selectable keep their key.
+// Normalize an optional environment/tenant scope (such as aemAuthorUrl) into a lowercase host or slug.
+// When omitted or empty, keyFor produces the exact legacy hash; when provided, jobs on different
+// AEM environments or tenants with identical DAM paths get separate state keys and locks.
+function normalizeScope (scope) {
+  if (!scope) return ''
+  const s = String(scope).trim().replace(/\/+$/, '').toLowerCase()
+  if (!s) return ''
+  try {
+    return /^https?:\/\//i.test(s) ? new URL(s).host : s
+  } catch (e) {
+    return s
+  }
+}
+
+// One job per (folder, editable-output option, selected template, optional environment scope).
+// Without a template or scope the key is the legacy folder|option one, so existing jobs keep their key.
 // Editable-only runs (no flattened images) are a different job from images-only / images + editable ones.
 // HTML5 runs (DA pages only, no flattened images) are their own job too, so an earlier images-only job is not reused.
-const keyFor = (folder, writeIndd, template, editableOnly, html5) => `idapi-job-${crypto.createHash('sha256').update(`${folder}|${writeIndd ? '1' : '0'}${template ? `|${template}` : ''}${editableOnly ? '|editable-only' : ''}${html5 ? '|html5' : ''}`).digest('hex').slice(0, 48)}`
+const keyFor = (folder, writeIndd, template, editableOnly, html5, scope) => {
+  const sc = normalizeScope(scope)
+  return `idapi-job-${crypto.createHash('sha256').update(`${folder}|${writeIndd ? '1' : '0'}${template ? `|${template}` : ''}${editableOnly ? '|editable-only' : ''}${html5 ? '|html5' : ''}${sc ? `|@${sc}` : ''}`).digest('hex').slice(0, 48)}`
+}
 // What a request asks for: mode 'editable' = only the editable file (+ its PDF/previews), 'both' = images and the
 // editable file (legacy writeIndd=1), anything else = images only.
 const outputMode = (params) => {
@@ -37,10 +54,11 @@ const publicJob = (job) => ({
   ...(job.findings && job.findings.length ? { findings: job.findings } : {})
 })
 
-// Assets View deep link to the job's output folder. Needs ASSETS_VIEW_TENANT (the "@org" slug in
-// Assets View URLs, e.g. "@yourorg"); without it there is no link rather than a wrong one.
+// Assets View deep link to the job's output folder. Accepts a dynamically discovered tenant
+// (job.tenant or params.tenant) or the deployment's ASSETS_VIEW_TENANT ("@org").
 function outputUrl (job, params = {}) {
-  const tenant = String(params.ASSETS_VIEW_TENANT || '').trim()
+  const rawTenant = String((job && job.tenant) || params.tenant || params.ASSETS_VIEW_TENANT || '').trim()
+  const tenant = rawTenant && !rawTenant.startsWith('@') && /^[A-Za-z0-9._-]+$/.test(rawTenant) ? `@${rawTenant}` : rawTenant
   const author = String(job.aemAuthorUrl || params.AEM_AUTHOR_URL || '').trim()
   const folder = job.outputFolder || (job.folder ? `${job.folder}/output` : '')
   if (!/^@[A-Za-z0-9._-]+$/.test(tenant) || !/^https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com\/?$/i.test(author) || !folder) return undefined
@@ -48,4 +66,4 @@ function outputUrl (job, params = {}) {
   return `https://experience.adobe.com/?repoId=${new URL(author).host}#/${tenant}/assets/browse${path}`
 }
 
-module.exports = { keyFor, publicJob, isDeliverable, outputUrl, isTemplateName, isDamFolder, outputMode }
+module.exports = { keyFor, normalizeScope, publicJob, isDeliverable, outputUrl, isTemplateName, isDamFolder, outputMode }

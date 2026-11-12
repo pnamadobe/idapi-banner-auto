@@ -1,4 +1,4 @@
-# 374TanBadger
+# AEM Banner Automation (`aem-banner-automation`)
 
 Welcome to my Adobe I/O Application!
 

@@ -112,3 +112,15 @@ test('stored findings are capped', async () => {
   await main(params())
   expect(stored().findings).toHaveLength(require('../actions/generate-idapi-banners/preflight').MAX_STORED_FINDINGS)
 })
+
+test('preflight=1 caches the inspection in state so an immediate start reuses it without re-running inspectInputs', async () => {
+  mockInspect.mockResolvedValue({ ok: true, findings: [warn], variationRows: 4, pageCount: 10 })
+  const pf = await main(params({ preflight: '1' }))
+  expect(pf.statusCode).toBe(200)
+  expect(mockInspect).toHaveBeenCalledTimes(1)
+
+  const startRes = await main(params())
+  expect(startRes.statusCode).toBe(202)
+  expect(mockInspect).toHaveBeenCalledTimes(1) // reused cached preflight!
+  expect(stored().findings).toEqual([warn])
+})

@@ -10,8 +10,8 @@
 var U = (function () {
 
     var CONFIG = {
-        // ---- the one path to edit when relocating the project ----
-        projectRoot: "/Users/pnam/Sandbox/ids-banner-auto-local",
+        // ---- fallback project root when $.fileName is unavailable ----
+        projectRoot: ".",
 
         templateRel: "template/brand-template.indd",
         csvRel:      "input/brand-variations.csv",

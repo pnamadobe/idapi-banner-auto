@@ -20,14 +20,14 @@ function readJob() {
   try {
     const j = JSON.parse(localStorage.getItem('idapi_job') || '{}');
     if (j && (j.folder || j.assetPath !== undefined)) {
-      return { folder: j.folder || '', template: j.templateName || '', assetPath: j.assetPath || '', aemAuthorUrl: j.aemAuthorUrl || '' };
+      return { folder: j.folder || '', template: j.templateName || '', assetPath: j.assetPath || '', aemAuthorUrl: j.aemAuthorUrl || '', tenant: j.tenant || '' };
     }
   } catch (e) { /* ignore */ }
   // fallback: hash query
   const h = window.location.hash || '';
   const q = h.includes('?') ? h.slice(h.indexOf('?') + 1) : '';
   const sp = new URLSearchParams(q);
-  return { folder: sp.get('folder') || '', template: sp.get('template') || '', aemAuthorUrl: sp.get('aemAuthorUrl') || '' };
+  return { folder: sp.get('folder') || '', template: sp.get('template') || '', aemAuthorUrl: sp.get('aemAuthorUrl') || '', tenant: sp.get('tenant') || '' };
 }
 function resolveActionUrl(action = 'generate-idapi-banners') {
   // config.json is populated at build/deploy with { "<pkg>/<action>": "https://…" }
@@ -35,10 +35,22 @@ function resolveActionUrl(action = 'generate-idapi-banners') {
   return hit ? hit[1] : null;
 }
 
-async function deterministicJobId(folder, mode, template) {
+function normalizeScope(scope) {
+  if (!scope) return '';
+  const s = String(scope).trim().replace(/\/+$/, '').toLowerCase();
+  if (!s) return '';
+  try {
+    return /^https?:\/\//i.test(s) ? new URL(s).host : s;
+  } catch (e) {
+    return s;
+  }
+}
+
+async function deterministicJobId(folder, mode, template, aemAuthorUrl) {
   // must match keyFor() in actions/job-utils.js
   const editable = mode === 'both' || mode === 'editable';
-  const input = new TextEncoder().encode(`${folder}|${editable ? '1' : '0'}${template ? `|${template}` : ''}${mode === 'editable' ? '|editable-only' : ''}${mode === 'html5' ? '|html5' : ''}`);
+  const sc = normalizeScope(aemAuthorUrl);
+  const input = new TextEncoder().encode(`${folder}|${editable ? '1' : '0'}${template ? `|${template}` : ''}${mode === 'editable' ? '|editable-only' : ''}${mode === 'html5' ? '|html5' : ''}${sc ? `|@${sc}` : ''}`);
   const digest = await crypto.subtle.digest('SHA-256', input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 48);
 }
@@ -55,13 +67,30 @@ const ANIMATION_STYLES = [
 ];
 const DEFAULT_ANIMATION_STYLE = 'editorial';
 
-// The signed-in user's IMS token, asked of the Assets View host each time (it is never stored).
+// The signed-in user's IMS token and org ID, asked of the Assets View host each time (never stored on disk).
 // Assets View exposes it as host.auth.getIMSInfo(); sharedContext 'auth' is the AEM editors' way.
-async function userToken(gc) {
-  if (!gc) return '';
-  try { const info = await gc.host.auth.getIMSInfo(); if (info && info.accessToken) return info.accessToken; } catch (e) { /* older host */ }
-  try { const auth = gc.sharedContext.get('auth'); if (auth && auth.imsToken) return auth.imsToken; } catch (e) { /* not shared */ }
-  return '';
+async function userAuth(gc) {
+  if (!gc) return { token: '', imsOrg: '' };
+  try {
+    const info = await gc.host.auth.getIMSInfo();
+    if (info && info.accessToken) {
+      return { token: info.accessToken, imsOrg: info.imsOrg || info.imsOrgId || info.org || '' };
+    }
+  } catch (e) { /* older host */ }
+  try {
+    const auth = gc.sharedContext.get('auth');
+    if (auth && auth.imsToken) {
+      return { token: auth.imsToken, imsOrg: auth.imsOrg || auth.imsOrgId || auth.org || '' };
+    }
+  } catch (e) { /* not shared */ }
+  return { token: '', imsOrg: '' };
+}
+
+function buildAuthHeaders(token, imsOrg) {
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (imsOrg) headers['x-gw-ims-org-id'] = imsOrg;
+  return headers;
 }
 
 // DA folder of an HTML5 job: the job's own record, else where preflight says the pages would go.
@@ -70,13 +99,19 @@ const html5FolderUrl = (r, estimate, style) => (r && r.html5Folder && r.html5Fol
   || (estimate && estimate.html5Site && estimate.html5Path ? `https://da.live/#/${estimate.html5Site}${html5PathWithStyle(estimate.html5Path, style)}` : '');
 
 // HTML5 results: EDS preview links per size, then the CM360 packaging control.
-function Html5Panel({ html5, jobId, token, folderUrl }) {
+function Html5Panel({ html5, jobId, token, imsOrg, tenant, folderUrl }) {
   const [pkg, setPkg] = useState(null);
   const [pkgError, setPkgError] = useState('');
   const url = resolveActionUrl('generate-idapi-banners-package');
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = buildAuthHeaders(token, imsOrg);
   const call = async (extra) => {
-    const res = await actionWebInvoke(url, headers, { jobId, ...(token ? { userToken: token } : {}), ...extra });
+    const res = await actionWebInvoke(url, headers, {
+      jobId,
+      ...(token ? { userToken: token } : {}),
+      ...(imsOrg ? { imsOrg } : {}),
+      ...(tenant ? { tenant } : {}),
+      ...extra
+    });
     if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || `package action returned ${res.statusCode}`);
     return res && res.body ? res.body : res;
   };
@@ -158,7 +193,7 @@ function FindingsPanel({ findings }) {
 // Pick the existing DA / EDS site this folder publishes HTML5 banners to. The action checks the signed-in
 // user can write to it and that it serves the ad block, then saves html5.json in the chosen folder as them.
 // Creating a site (repo, Code Sync, DA) stays in the setup guide.
-function SitePicker({ estimate, folder, aemAuthorUrl, getToken, onSaved, onCancel }) {
+function SitePicker({ estimate, folder, aemAuthorUrl, getAuth, onSaved, onCancel }) {
   const [org0, site0] = String((estimate && estimate.html5Site) || '/').split('/');
   const folders = (estimate && Array.isArray(estimate.html5Folders) ? estimate.html5Folders : []);
   const defaultTarget = (estimate && estimate.html5FoundAt) || folders[1] || folders[0] || folder;
@@ -172,9 +207,18 @@ function SitePicker({ estimate, folder, aemAuthorUrl, getToken, onSaved, onCance
     setSaveError('');
     try {
       const url = resolveActionUrl();
-      const token = await getToken();
+      const { token, imsOrg } = await getAuth();
       if (!token) throw new Error('Assets View did not share your sign-in with this dialog. Reload Assets View and try again.');
-      const res = await actionWebInvoke(url, { Authorization: `Bearer ${token}` }, { folder, aemAuthorUrl, saveSite: '1', org, site, target, userToken: token });
+      const res = await actionWebInvoke(url, buildAuthHeaders(token, imsOrg), {
+        folder,
+        aemAuthorUrl,
+        saveSite: '1',
+        org,
+        site,
+        target,
+        userToken: token,
+        ...(imsOrg ? { imsOrg } : {})
+      });
       if (res && (res.error || (res.statusCode && res.statusCode >= 400))) throw new Error(res.error || `saving the site returned ${res.statusCode}`);
       await onSaved();
     } catch (e) {
@@ -212,7 +256,7 @@ export default function ModalIndesignBannersGeneration() {
   const [guestConnection, setGuestConnection] = useState();
   const [colorScheme, setColorScheme] = useState('light');
   const [job] = useState(readJob);
-  const { folder, template, aemAuthorUrl } = job;
+  const { folder, template, aemAuthorUrl, tenant } = job;
   const editableKind = /\.psd$/i.test(template) ? 'PSD' : 'INDD';
   const [status, setStatus] = useState('idle'); // idle | html5-confirm | running | started | done | error
   const [result, setResult] = useState(null);
@@ -228,37 +272,46 @@ export default function ModalIndesignBannersGeneration() {
   const [editSite, setEditSite] = useState(false);
   const [animationStyle, setAnimationStyle] = useState(DEFAULT_ANIMATION_STYLE);
   const [imsToken, setImsToken] = useState(''); // the user's own token (memory only): authenticates all action calls
+  const [imsOrg, setImsOrg] = useState('');
   const authRef = useRef(null);
 
-  const getToken = async () => {
+  const getAuth = async () => {
     if (guestConnection) {
-      const fresh = await userToken(guestConnection);
-      if (fresh) {
-        if (fresh !== imsToken) setImsToken(fresh);
+      const fresh = await userAuth(guestConnection);
+      if (fresh.token) {
+        if (fresh.token !== imsToken) setImsToken(fresh.token);
+        if (fresh.imsOrg && fresh.imsOrg !== imsOrg) setImsOrg(fresh.imsOrg);
         return fresh;
       }
     }
-    if (imsToken) return imsToken;
+    if (imsToken) return { token: imsToken, imsOrg };
     if (!authRef.current) {
       authRef.current = (async () => {
         const gc = await attach({ id: extensionId });
         setGuestConnection(gc);
         try { const t = await gc.host.theme.getThemeInfo(); if (t && t.colorScheme) setColorScheme(t.colorScheme); } catch (e) {}
-        const tok = await userToken(gc);
-        if (tok) setImsToken(tok);
-        return tok;
+        const auth = await userAuth(gc);
+        if (auth.token) setImsToken(auth.token);
+        if (auth.imsOrg) setImsOrg(auth.imsOrg);
+        return auth;
       })();
     }
     return authRef.current;
   };
 
   const invokeAuth = async (url, params) => {
-    const token = await getToken();
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    return actionWebInvoke(url, headers, token ? { ...params, userToken: token } : params);
+    const { token, imsOrg: org } = await getAuth();
+    const headers = buildAuthHeaders(token, org);
+    const body = {
+      ...params,
+      ...(tenant ? { tenant } : {}),
+      ...(token ? { userToken: token } : {}),
+      ...(org ? { imsOrg: org } : {})
+    };
+    return actionWebInvoke(url, headers, body);
   };
 
-  useEffect(() => { getToken(); }, []);
+  useEffect(() => { getAuth(); }, []);
 
   const hasErrors = findings.some((f) => f.severity === 'error');
 
@@ -288,7 +341,7 @@ export default function ModalIndesignBannersGeneration() {
     let cancelled = false;
     (async () => {
       try {
-        const jobId = await deterministicJobId(folder, 'html5', template);
+        const jobId = await deterministicJobId(folder, 'html5', template, aemAuthorUrl);
         const res = await invokeAuth(url, { jobId });
         const body = res && res.body ? res.body : res;
         if (cancelled || !body || !body.writeHtml5 || typeof body.status !== 'string') return;
@@ -383,21 +436,22 @@ export default function ModalIndesignBannersGeneration() {
     // a spinner: race a short window to surface fast failures (auth/missing inputs);
     // if it's still running after that, tell them it's underway and let them close.
     // The Runtime action keeps running to completion even after the UI stops waiting.
-    const params = { folder, template, aemAuthorUrl, mode, writeIndd: mode === 'both' || mode === 'editable' ? '1' : '' };
+    const params = { folder, template, aemAuthorUrl, ...(tenant ? { tenant } : {}), mode, writeIndd: mode === 'both' || mode === 'editable' ? '1' : '' };
     if (mode === 'html5') {
       params.writeHtml5 = '1';
       params.animationStyle = animationStyle;
     }
     setHtml5Run(mode === 'html5');
     if (override && hasErrors) params.preflightOverride = '1';
-    const token = await getToken();
+    const { token, imsOrg: org } = await getAuth();
     if (!token) {
       setError('Assets View did not share your sign-in with this dialog. Reload Assets View and try again.');
       setStatus(mode === 'html5' ? 'html5-confirm' : 'idle');
       return;
     }
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = buildAuthHeaders(token, org);
     params.userToken = token;
+    if (org) params.imsOrg = org;
     const call = actionWebInvoke(url, headers, params)
       .then((r) => ({ done: true, r }))
       .catch((e) => ({ done: true, err: e }));
@@ -406,7 +460,7 @@ export default function ModalIndesignBannersGeneration() {
       new Promise((res) => setTimeout(() => res({ started: true }), 6000)),
     ]);
     if (outcome.started) {
-      setResult({ jobId: await deterministicJobId(folder, mode, template) });
+      setResult({ jobId: await deterministicJobId(folder, mode, template, aemAuthorUrl) });
       setStatus('started');
       return;
     }
@@ -527,7 +581,7 @@ export default function ModalIndesignBannersGeneration() {
                 estimate={estimate}
                 folder={folder}
                 aemAuthorUrl={aemAuthorUrl}
-                getToken={getToken}
+                getAuth={getAuth}
                 onSaved={async () => { await inspect(); setEditSite(false); }}
                 onCancel={editSite ? () => setEditSite(false) : null}
               /></>
@@ -663,7 +717,7 @@ export default function ModalIndesignBannersGeneration() {
             )}
             {/* The HTML5 panel (sizes, DA link, Package for CM360) only after an HTML5 run that published pages. */}
             {result.writeHtml5 && result.html5 && (result.html5.pages || []).length > 0
-              ? <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} folderUrl={html5FolderUrl(result, estimate, result.animationStyle || animationStyle)} />
+              ? <Html5Panel html5={result.html5} jobId={result.jobId} token={imsToken} imsOrg={imsOrg} tenant={tenant} folderUrl={html5FolderUrl(result, estimate, result.animationStyle || animationStyle)} />
               : result.writeHtml5 && (
                 <Text>
                   No HTML5 pages were published for this job.

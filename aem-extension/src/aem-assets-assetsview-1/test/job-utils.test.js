@@ -46,3 +46,19 @@ test('isDamFolder accepts valid /content/dam/... paths and rejects traversal or 
     expect(isDamFolder(bad)).toBe(false)
   }
 })
+
+test('keyFor isolates jobs across different AEM environments / tenants while preserving legacy keys when scope is omitted', () => {
+  const legacy = keyFor('/content/dam/x', false, 't.indd', false, false)
+  expect(keyFor('/content/dam/x', false, 't.indd', false, false, '')).toBe(legacy)
+  const envA = keyFor('/content/dam/x', false, 't.indd', false, false, 'https://author-p1-e1.adobeaemcloud.com/')
+  const envB = keyFor('/content/dam/x', false, 't.indd', false, false, 'https://author-p1-e2.adobeaemcloud.com')
+  expect(envA).not.toBe(legacy)
+  expect(envA).not.toBe(envB)
+  expect(keyFor('/content/dam/x', false, 't.indd', false, false, 'https://AUTHOR-P1-E1.adobeaemcloud.com')).toBe(envA)
+})
+
+test('outputUrl supports dynamically discovered tenant on job or params', () => {
+  const { outputUrl } = require('../actions/job-utils')
+  const job = { folder: '/content/dam/camp', aemAuthorUrl: 'https://author-p1-e2.adobeaemcloud.com', tenant: 'acme' }
+  expect(outputUrl(job, {})).toBe('https://experience.adobe.com/?repoId=author-p1-e2.adobeaemcloud.com#/@acme/assets/browse/content/dam/camp/output')
+})

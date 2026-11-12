@@ -27,15 +27,21 @@ runtimeManifest:
             # Input staging uses Adobe I/O Files (@adobe/aio-lib-files) — storage
             # provisioned with the app; no external bucket/SAS to configure.
             # AEM author + the action's own AEM auth (read inputs / write outputs).
-            # AEM_SC_JSON (base64 Service Credential) is durable; AEM_DEV_TOKEN is a
-            # dev-token fallback.
+            # Supports OAuth S2S (AEM_OAUTH_CLIENT_ID / AEM_OAUTH_CLIENT_SECRET),
+            # AEM_SC_JSON (base64 Service Credential), or AEM_DEV_TOKEN fallback.
             AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            ALLOWED_AEM_AUTHORS: $ALLOWED_AEM_AUTHORS
+            ALLOWED_IMS_ORGS: $ALLOWED_IMS_ORGS
+            AEM_OAUTH_CLIENT_ID: $AEM_OAUTH_CLIENT_ID
+            AEM_OAUTH_CLIENT_SECRET: $AEM_OAUTH_CLIENT_SECRET
+            AEM_OAUTH_SCOPES: $AEM_OAUTH_SCOPES
             AEM_SC_JSON: $AEM_SC_JSON
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             # Shared brand-fonts folder in the DAM (staged into the job's
             # "Document Fonts/"). Optional per-job <folder>/fonts overrides it.
             AEM_FONTS_PATH: $AEM_FONTS_PATH
             ASSETS_VIEW_TENANT: $ASSETS_VIEW_TENANT
+            AIO_STATE_REGION: $AIO_STATE_REGION
           limits:
             timeout: 600000      # 10 min — render + AEM write-back is long-running
             memorySize: 512
@@ -58,10 +64,15 @@ runtimeManifest:
             IMS_ENDPOINT: $IMS_ENDPOINT
             INDESIGN_EXECUTE_URL: $INDESIGN_EXECUTE_URL
             AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            ALLOWED_AEM_AUTHORS: $ALLOWED_AEM_AUTHORS
+            AEM_OAUTH_CLIENT_ID: $AEM_OAUTH_CLIENT_ID
+            AEM_OAUTH_CLIENT_SECRET: $AEM_OAUTH_CLIENT_SECRET
+            AEM_OAUTH_SCOPES: $AEM_OAUTH_SCOPES
             AEM_SC_JSON: $AEM_SC_JSON
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             AEM_FONTS_PATH: $AEM_FONTS_PATH
             PSD_HERO_FRAME_ASPECT: $PSD_HERO_FRAME_ASPECT
+            AIO_STATE_REGION: $AIO_STATE_REGION
             # HTML5 (DA pages + EDS preview). Pages are written as the signed-in user (the start
             # action passes their IMS token through; it is never stored). Optional overrides:
             # DA_TOKEN (a token DA accepts for this site), EDS_ADMIN_TOKEN (an EDS admin API key).
@@ -71,6 +82,7 @@ runtimeManifest:
           limits:
             timeout: 600000
             memorySize: 2048   # PSD templates (~60 MB) + embedded-image outputs overflowed 512 MB
+            concurrency: 1     # Dedicated 2 GB container per heavy render batch (prevents OOM collisions)
           annotations:
             final: true
         generate-idapi-banners-status:
@@ -79,9 +91,15 @@ runtimeManifest:
           runtime: nodejs:22
           inputs:
             AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            ALLOWED_AEM_AUTHORS: $ALLOWED_AEM_AUTHORS
+            ALLOWED_IMS_ORGS: $ALLOWED_IMS_ORGS
+            AEM_OAUTH_CLIENT_ID: $AEM_OAUTH_CLIENT_ID
+            AEM_OAUTH_CLIENT_SECRET: $AEM_OAUTH_CLIENT_SECRET
+            AEM_OAUTH_SCOPES: $AEM_OAUTH_SCOPES
             AEM_SC_JSON: $AEM_SC_JSON
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             ASSETS_VIEW_TENANT: $ASSETS_VIEW_TENANT
+            AIO_STATE_REGION: $AIO_STATE_REGION
           limits:
             timeout: 30000
             memorySize: 256
@@ -94,12 +112,18 @@ runtimeManifest:
           runtime: nodejs:22
           inputs:
             AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            ALLOWED_AEM_AUTHORS: $ALLOWED_AEM_AUTHORS
+            ALLOWED_IMS_ORGS: $ALLOWED_IMS_ORGS
+            AEM_OAUTH_CLIENT_ID: $AEM_OAUTH_CLIENT_ID
+            AEM_OAUTH_CLIENT_SECRET: $AEM_OAUTH_CLIENT_SECRET
+            AEM_OAUTH_SCOPES: $AEM_OAUTH_SCOPES
             AEM_SC_JSON: $AEM_SC_JSON
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             GITHUB_DISPATCH_TOKEN: $GITHUB_DISPATCH_TOKEN
             HTML5_WRITEBACK_SECRET: $HTML5_WRITEBACK_SECRET
             HTML5_WRITEBACK_URL: $HTML5_WRITEBACK_URL
             ASSETS_VIEW_TENANT: $ASSETS_VIEW_TENANT
+            AIO_STATE_REGION: $AIO_STATE_REGION
           limits:
             timeout: 60000
             memorySize: 256
@@ -114,9 +138,14 @@ runtimeManifest:
           runtime: nodejs:22
           inputs:
             AEM_AUTHOR_URL: $AEM_AUTHOR_URL
+            ALLOWED_AEM_AUTHORS: $ALLOWED_AEM_AUTHORS
+            AEM_OAUTH_CLIENT_ID: $AEM_OAUTH_CLIENT_ID
+            AEM_OAUTH_CLIENT_SECRET: $AEM_OAUTH_CLIENT_SECRET
+            AEM_OAUTH_SCOPES: $AEM_OAUTH_SCOPES
             AEM_SC_JSON: $AEM_SC_JSON
             AEM_DEV_TOKEN: $AEM_DEV_TOKEN
             HTML5_WRITEBACK_SECRET: $HTML5_WRITEBACK_SECRET
+            AIO_STATE_REGION: $AIO_STATE_REGION
           limits:
             timeout: 180000
             memorySize: 512

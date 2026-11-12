@@ -391,10 +391,8 @@ CM360-ready zip, a GIF preview and a storyboard for each ad, and writes them bac
 
 ## Set up your own environment
 
-Standing this up in your own org — InDesign API entitlement → OAuth credential →
-presigned storage → AEM → the Assets View extension — is documented step by step in
-**[SETUP.md](SETUP.md)**, with a filled-in `.env` template and a troubleshooting
-table for the common gotchas.
+- **Installing from Adobe Exchange (Enterprise Admins):** Follow **[docs/EXCHANGE-ADMIN-GUIDE.md](docs/EXCHANGE-ADMIN-GUIDE.md)** to acquire the app on Adobe Exchange, configure your environment parameters (`configSchema`), and enable the extension per AEM environment in AEM Extension Manager (zero CLI or code setup required).
+- **Deploying from source (Developers):** Standing this up in your own Developer Console project — InDesign API entitlement → OAuth credential → presigned storage → AEM → the Assets View extension — is documented step by step in **[SETUP.md](SETUP.md)**, with a filled-in `.env` template and a troubleshooting table for the common gotchas.
 
 ## Long-render orchestration
 

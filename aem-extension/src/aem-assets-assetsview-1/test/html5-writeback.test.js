@@ -59,7 +59,7 @@ test('rejects a bad token or one from an older run', async () => {
   expect((await call({ op: 'done', token: token({ outFolder: '/content/dam/other' }) })).error.statusCode).toBe(401)
 })
 
-test('backup returns only the run\'s own backup images', async () => {
+test('backup returns only the run\'s own backup images, and uses a presigned URL when large or requested', async () => {
   const r = await call({ op: 'backup', file: ad.backup })
   expect(Buffer.from(r.body.data, 'base64').toString()).toBe('JPEG')
   expect(calls).toContain(`GET ${AUTHOR}${OUT}/${ad.backup}`)

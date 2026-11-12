@@ -6,7 +6,7 @@
 const crypto = require('crypto')
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
-const { errorResponse, userBearer, stringParameters } = require('./utils')
+const { errorResponse, userBearer, isAllowedImsOrg, initState, stringParameters } = require('./utils')
 const { aemContext, aemDownload, aemListSafe, jobManifestName, html5SiteFor, hasFolderAccess } = require('./generate-idapi-banners/engine')
 const { classify } = require('./generate-idapi-banners/classify')
 const pkg = require('./generate-idapi-banners/package')
@@ -33,6 +33,7 @@ async function main (params) {
     logger.debug(stringParameters(params))
     const userToken = userBearer(params)
     if (!userToken) return errorResponse(401, 'missing Authorization bearer token', logger)
+    if (!isAllowedImsOrg(params)) return errorResponse(403, 'IMS organization is not authorized for this deployment', logger)
     if (!params.folder && !params.jobId) return errorResponse(400, 'folder or jobId is required', logger)
     if (params.folder && !isDamFolder(params.folder)) return errorResponse(400, 'folder must be a /content/dam/... path', logger)
     const jobIdParam = String(params.jobId || '')
@@ -48,7 +49,7 @@ async function main (params) {
         jobId = JSON.parse((await aemDownload(author, aemToken, `${params.folder}/output/${jobManifestName}`)).toString('utf8')).jobId
       } catch (e) { return errorResponse(404, `job manifest not found for ${params.folder}`, logger) }
     }
-    const state = await stateLib.init()
+    const state = await initState(stateLib, params)
     const rec = await state.get(`idapi-job-${jobId}`)
     if (!rec) return errorResponse(404, 'job not found', logger)
     const job = JSON.parse(rec.value)

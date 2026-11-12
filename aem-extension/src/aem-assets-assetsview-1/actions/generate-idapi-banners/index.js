@@ -4,9 +4,9 @@
  */
 const stateLib = require('@adobe/aio-lib-state')
 const { Core } = require('@adobe/aio-sdk')
-const { errorResponse, stringParameters, checkMissingRequestInputs, userBearer } = require('../utils')
+const { errorResponse, stringParameters, checkMissingRequestInputs, userBearer, isAllowedImsOrg, initState } = require('../utils')
 const { keyFor, publicJob: baseJob, outputUrl, isTemplateName, isDamFolder, outputMode } = require('../job-utils')
-const { inspectInputs, resolveOutputFolder, aemContext, hasFolderAccess, html5SiteFor } = require('./engine')
+const { inspectInputs, resolveOutputFolder, aemContext, hasFolderAccess, html5SiteFor, hasDurableAemAuth } = require('./engine')
 const { summarize, MAX_STORED_FINDINGS } = require('./preflight')
 const { campaignPaths, normalizeAnimationStyle } = require('./html5')
 const { saveSite } = require('./site')
@@ -36,6 +36,7 @@ async function main (params) {
       if (String(params.saveSite || '') === '1') return errorResponse(401, 'sign in again: the site is checked and saved as you', logger)
       return errorResponse(401, writeHtml5 ? 'HTML5 banners are written to Document Authoring as you: sign in again and retry' : 'Sign in again and retry: missing Authorization bearer token', logger)
     }
+    if (!isAllowedImsOrg(params)) return errorResponse(403, 'IMS organization is not authorized for this deployment', logger)
     const missing = checkMissingRequestInputs(params, ['folder'], [])
     if (missing) return errorResponse(400, missing, logger)
     if (!isDamFolder(params.folder)) return errorResponse(400, 'folder must be a /content/dam/... path', logger)
@@ -49,23 +50,41 @@ async function main (params) {
         return errorResponse(e.status || 500, e.message, logger)
       }
     }
-    if (!params.AEM_SC_JSON && !params.AEM_DEV_TOKEN) return errorResponse(500, 'AEM_SC_JSON or AEM_DEV_TOKEN must be configured for durable jobs', logger)
+    const hasAuth = typeof hasDurableAemAuth === 'function'
+      ? hasDurableAemAuth(params)
+      : Boolean((params.AEM_OAUTH_CLIENT_ID && params.AEM_OAUTH_CLIENT_SECRET) || params.AEM_SC_JSON || params.AEM_DEV_TOKEN)
+    if (!hasAuth) return errorResponse(500, 'AEM OAuth S2S, AEM_SC_JSON, or AEM_DEV_TOKEN must be configured for durable jobs', logger)
     const template = String(params.template || '').trim()
     if (template && !isTemplateName(template)) return errorResponse(400, 'template must be the file name of an .indd or .psd in the folder', logger)
     if (typeof hasFolderAccess === 'function' && !(await hasFolderAccess(params, callerToken, params.folder))) {
       return errorResponse(403, 'you do not have access to this job folder', logger)
     }
+    const state = await initState(stateLib, params)
+    const pfKey = `idapi-pf-${keyFor(params.folder, false, template, false, false, params.aemAuthorUrl).slice('idapi-job-'.length)}`
     // The estimate also says where HTML5 pages would go (html5Site / html5Path, from the folder's
     // html5.json) or why HTML5 can't run in this folder (html5SiteError).
-    if (String(params.preflight || '') === '1') return { statusCode: 200, body: await inspectInputs({ ...params, template }) }
+    if (String(params.preflight || '') === '1') {
+      const body = await inspectInputs({ ...params, template })
+      try { await state.put(pfKey, JSON.stringify({ at: Date.now(), body }), { ttl: 180 }) } catch (e) { /* non-fatal */ }
+      return { statusCode: 200, body }
+    }
     // Preflight gate: errors stop the start (HTTP 422) unless preflightOverride=1. Not run for a job that
     // is already queued or running (that request only reports it). An inspection that itself fails
     // (e.g. AEM unreachable) does not block; the worker reports such failures on the job.
+    // Reuses a fresh (<3 min) preflight cached from the modal's open check so clicking Generate responds immediately.
     const override = /^(1|true|yes)$/i.test(String(params.preflightOverride || ''))
     let checked = null
     const gate = async () => {
       try {
-        checked = await inspectInputs({ ...params, template })
+        const cachedPf = await state.get(pfKey)
+        if (cachedPf && cachedPf.value) {
+          const parsed = JSON.parse(cachedPf.value)
+          if (parsed && parsed.body && Date.now() - Number(parsed.at || 0) < 180 * 1000) {
+            checked = parsed.body
+            await state.delete(pfKey).catch(() => {})
+          }
+        }
+        if (!checked) checked = await inspectInputs({ ...params, template })
       } catch (e) {
         logger.warn(`preflight could not run: ${e.message}`)
         return null
@@ -79,7 +98,6 @@ async function main (params) {
       delete job.findings
       if (checked) job.findings = checked.findings.slice(0, MAX_STORED_FINDINGS)
     }
-    const state = await stateLib.init()
     if (writeHtml5 && /\.psd$/i.test(template)) return errorResponse(400, 'HTML5 banners need an InDesign template for now', logger)
     // HTML5 pages are written to Document Authoring as the signed-in user (DA does not accept the
     // render service's token). The token is handed to the worker in the invocation only: it is never
@@ -115,7 +133,7 @@ async function main (params) {
       delete job.recoveryAt
       delete job.recoveryError
     }
-    const stateKey = keyFor(params.folder, writeIndd, template, writeIndd && !writeImages, writeHtml5)
+    const stateKey = keyFor(params.folder, writeIndd, template, writeIndd && !writeImages, writeHtml5, params.aemAuthorUrl)
     const existing = await state.get(stateKey)
     if (existing) {
       const job = JSON.parse(existing.value)
@@ -128,6 +146,8 @@ async function main (params) {
       const blocked = await gate()
       if (blocked) return blocked
       stamp(job)
+      if (params.aemAuthorUrl) job.aemAuthorUrl = params.aemAuthorUrl
+      if (params.tenant) job.tenant = String(params.tenant).trim()
       job.writeImages = writeImages // jobs saved before HTML5 runs dropped the flattened images
       if (writeHtml5) {
         job.animationStyle = animationStyle
@@ -145,7 +165,7 @@ async function main (params) {
         job.rowOffset = 0
         job.outputs = []
         delete job.html5
-        job.outputFolder = await resolveOutputFolder({ ...params, aemAuthorUrl: job.aemAuthorUrl || params.aemAuthorUrl })
+        job.outputFolder = await resolveOutputFolder({ ...params, aemAuthorUrl: params.aemAuthorUrl || job.aemAuthorUrl })
         delete job.error
         await state.put(stateKey, JSON.stringify(job), { ttl, ifExists: true })
         await queue(job.jobId)
@@ -168,6 +188,7 @@ async function main (params) {
       folder: params.folder,
       template,
       aemAuthorUrl: params.aemAuthorUrl || '',
+      ...(params.tenant ? { tenant: String(params.tenant).trim() } : {}),
       writeIndd,
       writeImages,
       writeHtml5,

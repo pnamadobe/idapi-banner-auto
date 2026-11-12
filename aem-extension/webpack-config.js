@@ -7,6 +7,11 @@ module.exports = {
         test: /\.ts?$/,
         exclude: /node_modules/,
         use: 'ts-loader'
+      },
+      {
+        test: /\.jsx$/,
+        include: /scripts/,
+        type: 'asset/source'
       }
     ]
   },

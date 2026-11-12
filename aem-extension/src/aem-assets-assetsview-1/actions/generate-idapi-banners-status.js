@@ -1,7 +1,7 @@
 const stateLib = require('@adobe/aio-lib-state')
 const { publicJob, outputUrl, isDamFolder } = require('./job-utils')
 const { aemContext, aemDownload, jobManifestName, hasFolderAccess } = require('./generate-idapi-banners/engine')
-const { errorResponse, userBearer } = require('./utils')
+const { errorResponse, userBearer, isAllowedImsOrg, initState } = require('./utils')
 
 const staleQueueMs = 45 * 1000
 // A worker is killed at its 10-minute limit; a job still 'running' with no update for longer than the
@@ -24,6 +24,7 @@ async function wakeWorker (jobId) {
 exports.main = async (params) => {
   const callerToken = userBearer(params)
   if (!callerToken) return errorResponse(401, 'missing Authorization bearer token')
+  if (!isAllowedImsOrg(params)) return errorResponse(403, 'IMS organization is not authorized for this deployment')
   const jobId = String(params.jobId || '')
   if (jobId && !/^[a-f0-9]{48}$/.test(jobId)) return errorResponse(400, 'invalid jobId')
   if (params.folder && !isDamFolder(params.folder)) return errorResponse(400, 'folder must be a /content/dam/... path')
@@ -41,7 +42,7 @@ exports.main = async (params) => {
     }
   }
   if (!resolvedJobId) return errorResponse(400, 'jobId or folder is required')
-  const state = await stateLib.init()
+  const state = await initState(stateLib, params)
   const record = await state.get(`idapi-job-${resolvedJobId}`)
   if (!record) return errorResponse(404, 'job not found')
   const job = JSON.parse(record.value)

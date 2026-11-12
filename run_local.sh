@@ -10,7 +10,7 @@
 #   FORMAT=both WRITE_INDD=1 bash run_local.sh
 #   CSV=/path/to/other.csv bash run_local.sh
 set -euo pipefail
-ROOT="/Users/pnam/Sandbox/ids-banner-auto-local"
+ROOT="${BRAND_PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 SCRIPT="$ROOT/scripts/generate_variations.jsx"
 
 # Build a tiny wrapper .jsx that sets any requested globals, then evals the

@@ -5,8 +5,9 @@
  * <output>/html5/cm360. Ops: backup, initiate, complete, done.
  */
 const stateLib = require('@adobe/aio-lib-state')
+const filesLib = require('@adobe/aio-lib-files')
 const { Core } = require('@adobe/aio-sdk')
-const { errorResponse } = require('./utils')
+const { errorResponse, initState } = require('./utils')
 const { aemContext, aemDownload, ensureFolder, verifyAemAsset } = require('./generate-idapi-banners/engine')
 const { assetId, applyPlan } = require('./generate-idapi-banners/relations')
 const { attachPreview } = require('./generate-idapi-banners/renditions')
@@ -116,7 +117,7 @@ async function main (params) {
       if (/not configured/.test(e.message)) throw e
       return errorResponse(401, e.message, logger)
     }
-    const state = await stateLib.init()
+    const state = await initState(stateLib, params)
     const pkgKey = `idapi-pkg-${claims.job}`
     const raw = await state.get(pkgKey)
     const rec = raw && JSON.parse(raw.value)
@@ -134,7 +135,16 @@ async function main (params) {
       case 'backup': {
         const file = String(params.file || '')
         if (!pkg.safeName(file) || !rec.ads.some((a) => a.backup === file)) return errorResponse(403, 'not a backup image of this run', logger)
-        return { statusCode: 200, body: { data: (await aemDownload(author, aemToken, `${rec.jobOutput}/${file}`)).toString('base64') } }
+        const buf = await aemDownload(author, aemToken, `${rec.jobOutput}/${file}`)
+        // Inline base64 for standard <600 KB backups; presigned I/O Files URL when larger than OpenWhisk's 1 MB HTTP limit
+        if (buf.length > 600 * 1024 || String(params.presign || '') === '1') {
+          const files = await filesLib.init()
+          const remote = `idapi-runs/${Date.now()}-backup/${file}`
+          await files.write(remote, buf)
+          const url = await files.generatePresignURL(remote, { expiryInSeconds: 1800, permissions: 'r' })
+          return { statusCode: 200, body: { url, size: buf.length, ...(buf.length <= 700 * 1024 ? { data: buf.toString('base64') } : {}) } }
+        }
+        return { statusCode: 200, body: { data: buf.toString('base64') } }
       }
       case 'initiate': {
         const ad = adAt(rec, params.ad)

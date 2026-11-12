@@ -350,7 +350,7 @@ action `limits.timeout` (renders take minutes).
 
 At runtime the extension first looks for the current author URL in the Assets
 View host/resource metadata and passes it to the action. This avoids relying on
-environment IDs such as `p59602` or `e520244` when Assets View exposes the
+hardcoded environment IDs such as `p12345` or `e67890` when Assets View exposes the
 metadata. Keep `AEM_AUTHOR_URL` configured as a fallback because some hosts do
 not provide it. Ensure the Service Credential has access to the configured
 environment the deployment may use.

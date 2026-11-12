@@ -1,9 +1,10 @@
 {
-  "name": "374TanBadger",
-  "version": "0.0.1",
+  "name": "aem-banner-automation",
+  "version": "1.0.0",
+  "author": "Adobe",
   "private": true,
   "dependencies": {
-    "@adobe/aem-assets-assetsview-ext-tpl": "^0.1.0",
+    "@adobe/aio-lib-files": "^4.1.4",
     "@adobe/aio-lib-state": "^5.4.0",
     "@adobe/aio-sdk": "^6",
     "@adobe/exc-app": "^0.2.21",
@@ -36,11 +37,18 @@
   "scripts": {
     "test": "jest --passWithNoTests ./test",
     "e2e": "jest --collectCoverage=false --testRegex ./e2e",
-    "lint": "eslint --ignore-pattern web-src --no-error-on-unmatched-pattern test src actions",
+    "lint": "eslint --ignore-pattern web-src --ignore-pattern '*.jsx' --no-error-on-unmatched-pattern test src actions",
     "lint:fix": "npm run lint -- --fix"
   },
   "engines": {
     "node": ">=18"
+  },
+  "overrides": {
+    "tar": "^7.5.21",
+    "tar-fs": "^2.1.4",
+    "axios": "^1.15.1",
+    "cookie": "^0.7.2",
+    "@tootallnate/once": "^2.0.1"
   },
   "aio-app-builder-templates": [
     "@adobe/aem-assets-assetsview-ext-tpl"

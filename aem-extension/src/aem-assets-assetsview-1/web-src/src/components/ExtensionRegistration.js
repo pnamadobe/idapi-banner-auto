@@ -12,8 +12,10 @@ function findAemAuthorUrl(...sources) {
   const visit = (value, depth = 0) => {
     if (depth > 5 || value == null) return '';
     if (typeof value === 'string') {
-      const match = value.match(/https:\/\/author-[a-z0-9-]+\.adobeaemcloud\.com/i);
-      return match ? match[0].replace(/\/+$/, '') : '';
+      const match = value.match(/(?:https:\/\/)?author-[a-z0-9-]+\.adobeaemcloud\.com/i);
+      if (!match) return '';
+      const raw = match[0].replace(/\/+$/, '');
+      return /^https:\/\//i.test(raw) ? raw : `https://${raw}`;
     }
     if (typeof value !== 'object' || seen.has(value)) return '';
     seen.add(value);
@@ -24,6 +26,44 @@ function findAemAuthorUrl(...sources) {
     return '';
   };
   return sources.map(visit).find(Boolean) || '';
+}
+
+function findAssetsViewTenant(...sources) {
+  const seen = new Set();
+  const visit = (value, depth = 0) => {
+    if (depth > 5 || value == null) return '';
+    if (typeof value === 'string') {
+      const match = value.match(/#\/(@[A-Za-z0-9._-]+)\//) || (/^@[A-Za-z0-9._-]+$/.test(value.trim()) ? [null, value.trim()] : null);
+      return match ? match[1] : '';
+    }
+    if (typeof value !== 'object' || seen.has(value)) return '';
+    seen.add(value);
+    for (const item of Array.isArray(value) ? value : Object.values(value)) {
+      const result = visit(item, depth + 1);
+      if (result) return result;
+    }
+    return '';
+  };
+  return sources.map(visit).find(Boolean) || '';
+}
+
+async function resolveHostContext(guestConnection, context, resourceSelection) {
+  const cfg = (guestConnection && guestConnection.configuration) || {};
+  let discoveredHost = '';
+  try {
+    if (guestConnection && guestConnection.discovery && typeof guestConnection.discovery.getAemHost === 'function') {
+      discoveredHost = await guestConnection.discovery.getAemHost();
+    }
+  } catch (e) { /* optional host API */ }
+  let sharedHost = '';
+  try {
+    if (guestConnection && guestConnection.sharedContext && typeof guestConnection.sharedContext.get === 'function') {
+      sharedHost = guestConnection.sharedContext.get('aemHost') || '';
+    }
+  } catch (e) { /* optional sharedContext */ }
+  const aemAuthorUrl = findAemAuthorUrl(cfg.aemAuthorUrl, discoveredHost, sharedHost, context, resourceSelection, document.referrer);
+  const tenant = findAssetsViewTenant(cfg.assetsViewTenant, context, document.referrer);
+  return { aemAuthorUrl, tenant };
 }
 
 const TEMPLATE_RE = /\.(indd|psd)$/i;
@@ -70,16 +110,15 @@ function ExtensionRegistration() {
                   if (dam > 0) assetPath = assetPath.slice(dam);
                   const folder = assetPath.includes('/') ? assetPath.slice(0, assetPath.lastIndexOf('/')) : '';
                   const templateName = assetPath.split('/').pop() || '';
-                  // Assets View may include the current AEM author URL in the
-                  // resource metadata or host context. Pass it through when
-                  // available so one deployment can serve multiple envs.
-                  const aemAuthorUrl = findAemAuthorUrl(context, resourceSelection);
+                  // Resolve the current AEM author URL and tenant via @adobe/uix-guest discovery,
+                  // Extension Manager per-instance configuration, or Assets View context metadata.
+                  const { aemAuthorUrl, tenant } = await resolveHostContext(guestConnection, context, resourceSelection);
                   // The Runtime action authenticates to AEM itself, so we just hand
                   // it the job folder (via localStorage — shared across the
                   // extension's same-origin iframes).
-                  const job = { folder, templateName, assetPath, aemAuthorUrl };
+                  const job = { folder, templateName, assetPath, aemAuthorUrl, tenant };
                   try { localStorage.setItem('idapi_job', JSON.stringify(job)); } catch (e) {}
-                  const qs = `folder=${encodeURIComponent(folder)}&template=${encodeURIComponent(templateName)}&aemAuthorUrl=${encodeURIComponent(aemAuthorUrl)}`;
+                  const qs = `folder=${encodeURIComponent(folder)}&template=${encodeURIComponent(templateName)}&aemAuthorUrl=${encodeURIComponent(aemAuthorUrl)}&tenant=${encodeURIComponent(tenant || '')}`;
                   guestConnection.host.modal.openDialog({
                     title: 'Banners from template',
                     // cache-bust index.html at runtime so the modal iframe always

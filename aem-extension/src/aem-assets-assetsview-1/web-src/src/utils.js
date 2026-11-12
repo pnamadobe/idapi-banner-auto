@@ -44,7 +44,14 @@ async function actionWebInvoke (actionUrl, headers = {}, params = {}, options = 
   let content = await response.text()
 
   if (!response.ok) {
-    return JSON.parse(content)
+    try {
+      return JSON.parse(content)
+    } catch (e) {
+      return {
+        statusCode: response.status,
+        error: `HTTP ${response.status}: ${String(content || response.statusText || 'request failed').slice(0, 200)}`
+      }
+    }
   }
   try {
     content = JSON.parse(content)
