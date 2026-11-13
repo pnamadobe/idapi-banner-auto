@@ -82,7 +82,7 @@
   - `scripts/generate_variations.jsx:168-179, 281-291`
 - **Finding:**
   1. `paramFlag()` in `generate_variations.jsx:287` handles escaped quotes (`\\?"`) in `app.scriptArgs.get("parameters")`, whereas `writeIndd` (line 170), `writePdf` (line 178), and `workingFolder` (`brand_lib.jsx:115`) use unescaped quote regexes.
-  2. `computeRoot()` in `brand_lib.jsx:120` checks the hardcoded fallback `CONFIG.projectRoot` (`/Users/pnam/Sandbox/ids-banner-auto-local`) *before* deriving the root from `$.fileName`, causing local runs in `idapi-banner-auto` to read/write the sibling repo unless `BRAND_PROJECT_ROOT` is set.
+  2. `computeRoot()` in `brand_lib.jsx:120` checks the hardcoded fallback `CONFIG.projectRoot` (`<local-project-root>`) *before* deriving the root from `$.fileName`, causing local runs in `idapi-banner-auto` to read/write the sibling repo unless `BRAND_PROJECT_ROOT` is set.
 - **Remediation:** Used `paramFlag("writeIndd", writeIndd)` and `paramFlag("writePdf", writePdf)` in `generate_variations.jsx`, allowed optional escaped quotes on `workingFolder` in `brand_lib.jsx`, and checked `$.fileName` before `CONFIG.projectRoot` in `computeRoot()`.
 
 ---

@@ -36,6 +36,7 @@
   },
   "scripts": {
     "test": "jest --passWithNoTests ./test",
+    "test:smoke": "node scripts/smoke-test-deployed.mjs",
     "e2e": "jest --collectCoverage=false --testRegex ./e2e",
     "lint": "eslint --ignore-pattern web-src --ignore-pattern '*.jsx' --no-error-on-unmatched-pattern test src actions",
     "lint:fix": "npm run lint -- --fix"
